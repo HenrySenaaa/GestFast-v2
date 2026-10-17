@@ -26,8 +26,8 @@
         <td><strong style="color:${alerta ? '#dc2626' : '#111827'};">${GF.qty(p.quantidade_estoque)}</strong></td>
         <td>${esc(p.lote || '-')}</td>
         <td>${!v ? '-' : v.alerta ? `<span class="badge-status-pill ${v.vencido ? 'badge-urgent' : 'badge-warning'}" title="${v.texto}">${GF.date(p.validade)}</span>` : GF.date(p.validade)}</td>
-        <td><input type="number" class="figma-input input-contagem" style="width:85px; padding:4px 6px;" min="0" step="${GF.qtyAttrs(p.unidade).step}" value="${p.quantidade_estoque}" data-sistema="${p.quantidade_estoque}" aria-label="Contagem física de ${esc(p.nome_produto)}"></td>
-        <td><span class="col-div" style="font-weight:bold; color:#16a34a;">0</span></td></tr>`;
+        <td><input type="number" class="figma-input input-contagem" min="0" step="${GF.qtyAttrs(p.unidade).step}" value="${p.quantidade_estoque}" data-sistema="${p.quantidade_estoque}" aria-label="Contagem física de ${esc(p.nome_produto)}"></td>
+        <td><span class="col-div">0</span></td></tr>`;
     }).join('') : '<tr><td colspan="7" style="text-align:center; padding:16px;">Nenhum produto encontrado.</td></tr>';
   }
 
@@ -109,7 +109,7 @@
       const cel = inp.closest('tr').querySelector('.col-div');
       const d = Math.round(div * 1000) / 1000;
       cel.textContent = (d > 0 ? '+' : '') + GF.qty(d);
-      cel.style.color = d === 0 ? '#16a34a' : d < 0 ? '#dc2626' : '#2563eb';
+      cel.className = `col-div${d < 0 ? ' div-neg' : d > 0 ? ' div-pos' : ''}`;
     });
     $('#btn-salvar-conferencia').addEventListener('click', salvar);
     $('#btn-historico-conferencias').addEventListener('click', historico);

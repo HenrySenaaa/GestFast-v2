@@ -14,8 +14,8 @@
         <td><strong>${esc(u.nome)}</strong>${u.id_usuario === GF.state.user.id_usuario ? ' <small class="muted">(você)</small>' : ''}</td><td>${esc(u.email)}</td><td>${esc(u.cargo || '-')}</td>
         <td>${esc(GF.profileLabel(u.perfil))}</td>
         <td><span class="badge-status-pill ${u.status === 'Ativo' ? 'badge-success' : 'badge-urgent'}">${esc(u.status)}</span></td>
-        <td class="col-acoes"><button class="btn-icon btn-action-info" data-act="editar" title="Alterar dados e perfil" aria-label="Alterar ${esc(u.nome)}">✎</button>
-        ${u.status === 'Ativo' ? `<button class="btn-icon btn-action-cancel" data-act="desativar" title="Desativar acesso" aria-label="Desativar ${esc(u.nome)}">⏻</button>` : `<button class="btn-icon btn-action-accept" data-act="ativar" title="Reativar acesso" aria-label="Reativar ${esc(u.nome)}">↺</button>`}</td></tr>`).join('')
+        <td class="col-acoes"><button class="btn-icon btn-action-info" data-act="editar" title="Alterar dados e perfil" aria-label="Alterar ${esc(u.nome)}">${GF.icon('edit')}</button>
+        ${u.status === 'Ativo' ? `<button class="btn-icon btn-action-cancel" data-act="desativar" title="Desativar acesso" aria-label="Desativar ${esc(u.nome)}">${GF.icon('power')}</button>` : `<button class="btn-icon btn-action-accept" data-act="ativar" title="Reativar acesso" aria-label="Reativar ${esc(u.nome)}">${GF.icon('undo')}</button>`}</td></tr>`).join('')
         : '<tr><td colspan="6" class="empty-cell">Nenhum funcionário encontrado.</td></tr>';
     } catch (e) { $('#func-tabela-corpo').innerHTML = '<tr><td colspan="6" class="empty-cell">Falha ao carregar os funcionários.</td></tr>'; }
   }

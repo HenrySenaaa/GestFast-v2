@@ -27,6 +27,7 @@
     $('#header-user-name').textContent = data.user.nome;
     $('#header-user-role').textContent = data.user.cargo || GF.profileLabel(data.user.perfil);
     $('#user-avatar').title = `${data.user.nome} (${GF.profileLabel(data.user.perfil)})`;
+    $('#user-avatar').textContent = data.user.nome.split(' ').filter(Boolean).slice(0, 2).map(p => p[0].toUpperCase()).join('');
     GF.applyPermissions();
   };
 

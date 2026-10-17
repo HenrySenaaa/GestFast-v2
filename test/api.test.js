@@ -337,6 +337,7 @@ test('v2: listagens paginadas com total (sem limit continua devolvendo tudo)', a
   const p1 = await a.get('/api/sales?limit=2');
   assert.equal(p1.sales.length, Math.min(2, todas.sales.length));
   assert.equal(p1.total, todas.sales.length);
+  assert.equal(p1.faturamento, Math.round(todas.sales.filter(v => v.status_venda === 'Concluída').reduce((s, v) => s + v.valor_total, 0) * 100) / 100);
   assert.deepEqual(p1.sales.map(v => v.id_venda), todas.sales.slice(0, 2).map(v => v.id_venda));
   const p2 = await a.get('/api/sales?limit=2&offset=2');
   assert.deepEqual(p2.sales.map(v => v.id_venda), todas.sales.slice(2, 4).map(v => v.id_venda));
@@ -344,6 +345,7 @@ test('v2: listagens paginadas com total (sem limit continua devolvendo tudo)', a
   const movs = await a.get('/api/movements?tipo=Saída');
   const pm = await a.get('/api/movements?tipo=Saída&limit=3');
   assert.equal(pm.total, movs.movements.length);
+  assert.equal(pm.valorTotal, Math.round(movs.movements.reduce((s, m) => s + m.valor_total, 0) * 100) / 100);
   assert.deepEqual(pm.movements, movs.movements.slice(0, 3));
   const reqs = await a.get('/api/requisitions');
   const pr = await a.get('/api/requisitions?limit=1&offset=1');

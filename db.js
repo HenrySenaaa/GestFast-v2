@@ -615,7 +615,7 @@ class Database {
 
   async contarRequisicoes() {
     const [[r]] = await pool.query('SELECT COUNT(*) AS n FROM requisicao');
-    return Number(r.n);
+    return { total: Number(r.n) };
   }
 
   async getRequisicao(id, c = pool, lock = false) {
@@ -790,10 +790,14 @@ class Database {
     return rows.map(mapMov);
   }
 
+  // Total de registros e valor somado de TODO o filtro (não só da página), para o resumo da tela.
   async contarMovimentacoes(filtros = {}) {
     const f = this.filtroMovimentacoes(filtros);
-    const [[r]] = await pool.query(`SELECT COUNT(*) AS n FROM movimentacao_estoque m${f.sql}`, f.params);
-    return Number(r.n);
+    // Sem período, somar o histórico inteiro lendo a tabela em sequência é ~3x mais rápido que pelo índice
+    // de tipo (que buscaria linha a linha). Com período, o índice vence. Medido no teste de carga.
+    const dica = filtros.from || filtros.to ? '' : ' IGNORE INDEX (idx_mov_tipo_data)';
+    const [[r]] = await pool.query(`SELECT COUNT(*) AS n, COALESCE(SUM(m.quantidade * m.valor_unitario), 0) AS valor FROM movimentacao_estoque m${dica}${f.sql}`, f.params);
+    return { total: Number(r.n), valorTotal: r2(r.valor) };
   }
 
   // ---------------------------------------------------------------- vendas (RF 07, 08, 09)
@@ -854,10 +858,12 @@ class Database {
     return rows.map(v => mapVenda(v, itens.get(v.id_venda)));
   }
 
+  // Total de vendas e faturamento (só as concluídas) de TODO o filtro, para o resumo da tela.
   async contarVendas(filtros = {}) {
     const f = this.filtroVendas(filtros);
-    const [[r]] = await pool.query(`SELECT COUNT(*) AS n FROM venda v${f.sql}`, f.params);
-    return Number(r.n);
+    const [[r]] = await pool.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(IF(v.status_venda = 'Concluída', v.valor_total, 0)), 0) AS fat FROM venda v${f.sql}`, f.params);
+    return { total: Number(r.n), faturamento: r2(r.fat) };
   }
 
   async gravarItensVenda(c, idVenda, itens) {

@@ -37,6 +37,12 @@
   GF.fractional = un => ['kg', 'lt', 'l'].includes(String(un || '').toLowerCase());
   GF.qtyAttrs = un => (GF.fractional(un) ? { min: '0.001', step: '0.001' } : { min: '1', step: '1' });
   GF.applyQtyAttrs = (input, un) => { const a = GF.qtyAttrs(un); input.min = a.min; input.step = a.step; };
+  // Ícone do sprite SVG do index.html (ex.: GF.icon('trash')).
+  GF.icon = (nome, cls = 'icon') => `<svg class="${cls}" aria-hidden="true"><use href="#i-${nome}"/></svg>`;
+  // Valor monetário curto para os cartões do painel (R$ 1,2 mil).
+  GF.moneyShort = n => (Math.abs(n) >= 10000
+    ? Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 1 })
+    : GF.money(n));
 
   const EMOJI_CAT = { 1: '🍞', 2: '☕', 3: '🌾', 4: '🍰', 5: '🧀' };
   GF.imgFor = p => {
@@ -51,11 +57,24 @@
     const t = document.createElement('div');
     t.className = `toast ${type}`;
     t.setAttribute('role', type === 'error' ? 'alert' : 'status');
-    const ic = document.createElement('span'); ic.textContent = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
-    const tx = document.createElement('span'); tx.textContent = msg;
-    t.append(ic, ' ', tx);
+    t.innerHTML = `${GF.icon(type === 'success' ? 'ok' : type === 'error' ? 'alert' : 'info', 'icon toast-ico')}<span class="toast-msg"></span><button type="button" class="toast-close" aria-label="Fechar aviso">&times;</button>`;
+    $('.toast-msg', t).textContent = msg;
+    const sair = () => { if (t.classList.contains('saindo')) return; t.classList.add('saindo'); setTimeout(() => t.remove(), 200); };
+    $('.toast-close', t).addEventListener('click', sair);
     box.appendChild(t);
-    setTimeout(() => t.remove(), type === 'error' ? 6500 : 3800);
+    while (box.children.length > 4) box.firstElementChild.remove(); // no máximo 4 avisos na tela
+    setTimeout(sair, type === 'error' ? 6500 : 3800);
+  };
+
+  // Mantém o Tab dentro do modal aberto (acessibilidade).
+  const FOCAVEIS = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  GF.prenderFoco = (e, box) => {
+    if (e.key !== 'Tab') return;
+    const els = $$(FOCAVEIS, box).filter(el => el.offsetParent !== null);
+    if (!els.length) return;
+    const [ini, fim] = [els[0], els[els.length - 1]];
+    if (e.shiftKey && document.activeElement === ini) { e.preventDefault(); fim.focus(); }
+    else if (!e.shiftKey && document.activeElement === fim) { e.preventDefault(); ini.focus(); }
   };
 
   GF.openModal = ({ title, html, wide = false, onMount }) => {
@@ -67,9 +86,9 @@
     document.body.appendChild(back);
     const prev = document.activeElement;
     const onKey = e => {
-      if (e.key !== 'Escape') return;
       const abertos = Array.from(document.querySelectorAll('.modal-backdrop:not(.is-hidden)'));
-      if (abertos[abertos.length - 1] === back) close();
+      if (abertos[abertos.length - 1] !== back) return;
+      if (e.key === 'Escape') close(); else GF.prenderFoco(e, back);
     };
     const close = () => { document.removeEventListener('keydown', onKey); back.remove(); if (prev && prev.focus) prev.focus(); };
     document.addEventListener('keydown', onKey);
@@ -159,6 +178,21 @@
     } catch (e) { GF.toast(e.message, 'error'); return false; }
   };
 
+  // Paginação: desenha "1–50 de 320" + botões em `el`; `ir(offset)` carrega a página pedida.
+  GF.POR_PAGINA = 50;
+  GF.pager = (el, { total, offset, limite = GF.POR_PAGINA, ir }) => {
+    if (!total || total <= limite) { el.innerHTML = total ? `<span>${total} registro(s)</span>` : ''; return; }
+    const pag = Math.floor(offset / limite) + 1, pags = Math.ceil(total / limite);
+    el.innerHTML = `<span>${(offset + 1).toLocaleString('pt-BR')}–${Math.min(offset + limite, total).toLocaleString('pt-BR')} de ${total.toLocaleString('pt-BR')}</span>
+      <span class="pager-btns">
+        <button class="btn btn-sm btn-secondary" data-pg="0" ${pag === 1 ? 'disabled' : ''} aria-label="Primeira página">${GF.icon('chevrons-left', 'icon icon-sm')}</button>
+        <button class="btn btn-sm btn-secondary" data-pg="${offset - limite}" ${pag === 1 ? 'disabled' : ''} aria-label="Página anterior">${GF.icon('chevron-left', 'icon icon-sm')}</button>
+        <span class="pager-page">${pag} / ${pags}</span>
+        <button class="btn btn-sm btn-secondary" data-pg="${offset + limite}" ${pag === pags ? 'disabled' : ''} aria-label="Próxima página">${GF.icon('chevron-right', 'icon icon-sm')}</button>
+      </span>`;
+    el.onclick = e => { const b = e.target.closest('[data-pg]'); if (b && !b.disabled) ir(Number(b.dataset.pg)); };
+  };
+
   GF.delegate = (root, ev, sel, fn) => root.addEventListener(ev, e => { const t = e.target.closest(sel); if (t && root.contains(t)) fn(e, t); });
 
   // dados de apoio
@@ -199,18 +233,18 @@
   // Procura telas do sistema (local) e conteúdo: produtos, requisições, vendas e funcionários (servidor,
   // já filtrado pelo perfil do usuário).
   const OPCOES = [
-    { label: 'Início (Dashboard)', icon: '🏠', desc: 'Alertas, compras recentes e distribuição do estoque', view: 'dashboard', k: 'inicio dashboard painel home alertas', perm: 'dashboard:ver' },
-    { label: 'Verificar Estoque', icon: '📦', desc: 'Conferência física e divergências', view: 'estoque', k: 'estoque conferencia verificar inventario contagem', perm: 'estoque:conferir' },
-    { label: 'Requisições de Compra', icon: '📝', desc: 'Pedidos aos fornecedores', view: 'requisicoes', k: 'requisicao requisicoes pedido compra fornecedor', perm: 'requisicoes:ver' },
-    { label: 'Cadastro de Produtos', icon: '🏷️', desc: 'Incluir, alterar e inativar produtos', view: 'cadastro', k: 'cadastro produto cadastrar novo catalogo', perm: 'produtos:editar' },
-    { label: 'Saída de Produtos', icon: '📤', desc: 'Baixas, descartes e perdas', view: 'saidas', k: 'saida saidas baixa descarte perda', perm: 'movimentos:ver' },
-    { label: 'Entrada de Produtos', icon: '📥', desc: 'Recebimentos e reposição', view: 'entradas', k: 'entrada entradas recebimento reposicao', perm: 'movimentos:ver' },
-    { label: 'Venda (Caixa)', icon: '🛒', desc: 'Registrar vendas no balcão', view: 'vendas', k: 'venda vendas caixa pdv vender carrinho', perm: 'vendas:vender' },
-    { label: 'Histórico de Vendas', icon: '🧾', desc: 'Consultar, editar e cancelar vendas', view: 'historico', k: 'historico vendas cancelar editar consultar', perm: 'vendas:ver' },
-    { label: 'Relatórios', icon: '📊', desc: 'Faturamento e estoque, em PDF ou Excel', view: 'relatorios', k: 'relatorio relatorios faturamento exportar pdf excel', perm: 'relatorios:ver' },
-    { label: 'Funcionários', icon: '👥', desc: 'Acessos e perfis', view: 'funcionarios', k: 'funcionario funcionarios usuario acesso perfil login', perm: 'usuarios:gerir' },
-    { label: 'Configuração', icon: '⚙️', desc: 'Parâmetros, senha e acessibilidade', view: 'configuracoes', k: 'configuracao configuracoes config senha acessibilidade logs', perm: null },
-    { label: 'Ajuda', icon: '❓', desc: 'Sobre o sistema e perfis de acesso', view: 'ajuda', k: 'ajuda sobre suporte', perm: null }
+    { label: 'Início (Dashboard)', icon: 'home', desc: 'Alertas, compras recentes e distribuição do estoque', view: 'dashboard', k: 'inicio dashboard painel home alertas', perm: 'dashboard:ver' },
+    { label: 'Verificar Estoque', icon: 'box', desc: 'Conferência física e divergências', view: 'estoque', k: 'estoque conferencia verificar inventario contagem', perm: 'estoque:conferir' },
+    { label: 'Requisições de Compra', icon: 'clipboard', desc: 'Pedidos aos fornecedores', view: 'requisicoes', k: 'requisicao requisicoes pedido compra fornecedor', perm: 'requisicoes:ver' },
+    { label: 'Cadastro de Produtos', icon: 'tag', desc: 'Incluir, alterar e inativar produtos', view: 'cadastro', k: 'cadastro produto cadastrar novo catalogo', perm: 'produtos:editar' },
+    { label: 'Saída de Produtos', icon: 'out', desc: 'Baixas, descartes e perdas', view: 'saidas', k: 'saida saidas baixa descarte perda', perm: 'movimentos:ver' },
+    { label: 'Entrada de Produtos', icon: 'in', desc: 'Recebimentos e reposição', view: 'entradas', k: 'entrada entradas recebimento reposicao', perm: 'movimentos:ver' },
+    { label: 'Venda (Caixa)', icon: 'cart', desc: 'Registrar vendas no balcão', view: 'vendas', k: 'venda vendas caixa pdv vender carrinho', perm: 'vendas:vender' },
+    { label: 'Histórico de Vendas', icon: 'receipt', desc: 'Consultar, editar e cancelar vendas', view: 'historico', k: 'historico vendas cancelar editar consultar', perm: 'vendas:ver' },
+    { label: 'Relatórios', icon: 'chart', desc: 'Faturamento e estoque, em PDF ou Excel', view: 'relatorios', k: 'relatorio relatorios faturamento exportar pdf excel', perm: 'relatorios:ver' },
+    { label: 'Funcionários', icon: 'users', desc: 'Acessos e perfis', view: 'funcionarios', k: 'funcionario funcionarios usuario acesso perfil login', perm: 'usuarios:gerir' },
+    { label: 'Configuração', icon: 'settings', desc: 'Parâmetros, senha e acessibilidade', view: 'configuracoes', k: 'configuracao configuracoes config senha acessibilidade logs', perm: null },
+    { label: 'Ajuda', icon: 'help', desc: 'Sobre o sistema e perfis de acesso', view: 'ajuda', k: 'ajuda sobre suporte', perm: null }
   ];
   const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
@@ -236,10 +270,10 @@
 
   function itensRemotos(r) {
     const g = [];
-    if (r.produtos.length) g.push({ titulo: 'Produtos', itens: r.produtos.map(p => ({ icon: '📦', tag: 'Produto', t: p.nome_produto, s: `${p.codigo_barras} • ${p.categoria} • ${GF.qty(p.quantidade_estoque)} ${p.unidade} em estoque${p.status === 'Inativo' ? ' • Inativo' : ''}`, run: () => ACOES.produto(p) })) });
-    if (r.requisicoes.length) g.push({ titulo: 'Requisições de compra', itens: r.requisicoes.map(x => ({ icon: '📝', tag: 'Requisição', t: `${x.codigo_pedido} • ${x.produto_nome}`, s: `${x.fornecedor} • ${x.situacao}`, run: () => ACOES.requisicao(x) })) });
-    if (r.vendas.length) g.push({ titulo: 'Vendas', itens: r.vendas.map(v => ({ icon: '🧾', tag: 'Venda', t: `${v.codigo_venda} • ${GF.money(v.valor_total)}`, s: `${GF.date(v.data_venda)} • ${v.usuario_nome} • ${v.status_venda}`, run: () => ACOES.venda(v) })) });
-    if (r.usuarios.length) g.push({ titulo: 'Funcionários', itens: r.usuarios.map(u => ({ icon: '👤', tag: 'Funcionário', t: u.nome, s: `${u.email} • ${GF.profileLabel(u.perfil)} • ${u.status}`, run: () => ACOES.usuario(u) })) });
+    if (r.produtos.length) g.push({ titulo: 'Produtos', itens: r.produtos.map(p => ({ icon: 'box', tag: 'Produto', t: p.nome_produto, s: `${p.codigo_barras} • ${p.categoria} • ${GF.qty(p.quantidade_estoque)} ${p.unidade} em estoque${p.status === 'Inativo' ? ' • Inativo' : ''}`, run: () => ACOES.produto(p) })) });
+    if (r.requisicoes.length) g.push({ titulo: 'Requisições de compra', itens: r.requisicoes.map(x => ({ icon: 'clipboard', tag: 'Requisição', t: `${x.codigo_pedido} • ${x.produto_nome}`, s: `${x.fornecedor} • ${x.situacao}`, run: () => ACOES.requisicao(x) })) });
+    if (r.vendas.length) g.push({ titulo: 'Vendas', itens: r.vendas.map(v => ({ icon: 'receipt', tag: 'Venda', t: `${v.codigo_venda} • ${GF.money(v.valor_total)}`, s: `${GF.date(v.data_venda)} • ${v.usuario_nome} • ${v.status_venda}`, run: () => ACOES.venda(v) })) });
+    if (r.usuarios.length) g.push({ titulo: 'Funcionários', itens: r.usuarios.map(u => ({ icon: 'user', tag: 'Funcionário', t: u.nome, s: `${u.email} • ${GF.profileLabel(u.perfil)} • ${u.status}`, run: () => ACOES.usuario(u) })) });
     return g;
   }
 
@@ -278,11 +312,11 @@
         html += `<div class="sr-group">${GF.esc(g.titulo)}</div>`;
         g.itens.forEach(it => {
           n++;
-          html += `<div class="search-option-item${n === ativo ? ' highlighted' : ''}" data-i="${n}" role="option"><span class="option-icon">${it.icon}</span><span class="option-texts"><span class="option-title">${hl(it.t, q)}</span><span class="option-desc">${hl(it.s, q)}</span></span><span class="option-tag tag-${norm(it.tag)}">${GF.esc(it.tag)}</span></div>`;
+          html += `<div class="search-option-item${n === ativo ? ' highlighted' : ''}" data-i="${n}" role="option"><span class="option-icon">${GF.icon(it.icon)}</span><span class="option-texts"><span class="option-title">${hl(it.t, q)}</span><span class="option-desc">${hl(it.s, q)}</span></span><span class="option-tag tag-${norm(it.tag)}">${GF.esc(it.tag)}</span></div>`;
         });
       });
       if (q && q.length < 2) html += '<div class="sr-status">Digite ao menos 2 letras para buscar produtos, requisições e vendas.</div>';
-      else if (buscando && !(remoto && remoto.q === q)) html += '<div class="sr-status">🔎 Buscando produtos, requisições e vendas…</div>';
+      else if (buscando && !(remoto && remoto.q === q)) html += '<div class="sr-status">Buscando produtos, requisições e vendas…</div>';
       else if (!itens.length) html += `<div class="sr-empty"><strong>Nenhum resultado para “${GF.esc(q)}”</strong><span>Tente outro termo, o código de barras ou o número do pedido (ex.: REQ-9661).</span></div>`;
       list.innerHTML = html;
       dd.classList.remove('is-hidden');
@@ -351,9 +385,41 @@
     $('#cfg-a11y-reset').addEventListener('click', () => { localStorage.removeItem('gf_zoom'); localStorage.removeItem('gf_hc'); applyA11y(); });
   };
 
+  // Tema claro/escuro: segue o sistema até a pessoa escolher; a escolha fica salva no navegador.
+  const temaAtual = () => document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  function desenharBotaoTema() {
+    const escuro = temaAtual() === 'dark';
+    $('#btn-theme').innerHTML = GF.icon(escuro ? 'sun' : 'moon');
+    $('#btn-theme').title = escuro ? 'Usar tema claro' : 'Usar tema escuro';
+  }
+  GF.onThemeChange = []; // o painel redesenha os gráficos quando o tema muda
+  function alternarTema() {
+    const novo = temaAtual() === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = novo;
+    try { localStorage.setItem('gf_theme', novo); } catch (e) { /* storage indisponível */ }
+    desenharBotaoTema();
+    GF.onThemeChange.forEach(fn => fn());
+  }
+
   GF.initShell = () => {
     initSearch();
     GF.initA11y();
+    desenharBotaoTema();
+    $('#btn-theme').addEventListener('click', alternarTema);
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { desenharBotaoTema(); GF.onThemeChange.forEach(fn => fn()); });
+    // menu lateral recolhido (só ícones) no computador
+    try { document.body.classList.toggle('sidebar-min', localStorage.getItem('gf_sidebar_min') === '1'); } catch (e) { /* storage indisponível */ }
+    $('#btn-sidebar-collapse').addEventListener('click', () => {
+      const min = document.body.classList.toggle('sidebar-min');
+      try { localStorage.setItem('gf_sidebar_min', min ? '1' : '0'); } catch (e) { /* storage indisponível */ }
+    });
+    // modais estáticos do index.html: Esc fecha e o Tab fica preso dentro do modal
+    document.addEventListener('keydown', e => {
+      const abertos = $$('.modal-backdrop[id]:not(.is-hidden)');
+      const m = abertos[abertos.length - 1];
+      if (!m || $$('.modal-backdrop:not([id])').length) return; // modal dinâmico por cima cuida de si
+      if (e.key === 'Escape') GF.hideModalStatic('#' + m.id); else GF.prenderFoco(e, m);
+    });
     $$('.nav-item').forEach(n => n.addEventListener('click', e => { e.preventDefault(); GF.navigate(n.dataset.view); }));
     $('#btn-header-home').addEventListener('click', () => GF.navigate('dashboard'));
     // menu do usuário (senha, texto, contraste e sair)

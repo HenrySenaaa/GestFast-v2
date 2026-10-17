@@ -215,7 +215,7 @@ route('PATCH', '/api/products/:id/status', { perm: 'produtos:editar' }, async ct
 // ---------------- requisições
 // Listagens aceitam ?limit=&offset= (paginação, GestFast v2). Sem limit a resposta é a mesma de antes (tudo).
 const pagina = ctx => (ctx.query.limit ? { limite: ctx.query.limit, offset: ctx.query.offset } : {});
-const comTotal = async (ctx, chave, lista, contar) => ok({ [chave]: lista, ...(ctx.query.limit ? { total: await contar() } : {}) });
+const comTotal = async (ctx, chave, lista, contar) => ok({ [chave]: lista, ...(ctx.query.limit ? await contar() : {}) });
 
 route('GET', '/api/requisitions', { perm: 'requisicoes:ver' }, async ctx =>
   comTotal(ctx, 'requisicoes', await db.listRequisicoes(pagina(ctx)), () => db.contarRequisicoes()));
