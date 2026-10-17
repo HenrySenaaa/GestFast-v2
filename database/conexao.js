@@ -9,10 +9,16 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'gestfast',
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: Number(process.env.DB_POOL) || 10,
+  maxIdle: 4,                // conexões ociosas mantidas abertas (as demais são fechadas)
+  idleTimeout: 60000,
+  enableKeepAlive: true,     // evita conexão "morta" depois de o servidor ficar parado
   decimalNumbers: true, // DECIMAL vem como número, não como texto
   dateStrings: true     // datas vêm como texto ('2026-09-12 10:15:00'), igual ao frontend espera
 });
+
+// Cada conexão nova aceita GROUP_CONCAT longo (resumo dos itens no relatório de vendas).
+pool.pool.on('connection', conn => conn.query('SET SESSION group_concat_max_len = 65535', () => {}));
 
 async function testarConexao() {
   const conn = await pool.getConnection();

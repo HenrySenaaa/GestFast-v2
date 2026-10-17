@@ -213,7 +213,12 @@ route('PATCH', '/api/products/:id/status', { perm: 'produtos:editar' }, async ct
 });
 
 // ---------------- requisições
-route('GET', '/api/requisitions', { perm: 'requisicoes:ver' }, async () => ok({ requisicoes: await db.listRequisicoes() }));
+// Listagens aceitam ?limit=&offset= (paginação, GestFast v2). Sem limit a resposta é a mesma de antes (tudo).
+const pagina = ctx => (ctx.query.limit ? { limite: ctx.query.limit, offset: ctx.query.offset } : {});
+const comTotal = async (ctx, chave, lista, contar) => ok({ [chave]: lista, ...(ctx.query.limit ? { total: await contar() } : {}) });
+
+route('GET', '/api/requisitions', { perm: 'requisicoes:ver' }, async ctx =>
+  comTotal(ctx, 'requisicoes', await db.listRequisicoes(pagina(ctx)), () => db.contarRequisicoes()));
 route('GET', '/api/requisitions/:id', { perm: 'requisicoes:ver' }, async ctx => {
   const r = await db.getRequisicao(ctx.params.id);
   if (!r) throw new HttpError(404, 'Requisição não encontrada');
@@ -231,7 +236,10 @@ route('PATCH', '/api/requisitions/:id/status', {}, async ctx => {
 });
 
 // ---------------- movimentações
-route('GET', '/api/movements', { perm: 'movimentos:ver' }, async ctx => ok({ movements: await db.getMovimentacoes({ tipo: ctx.query.tipo, from: ctx.query.from, to: ctx.query.to }) }));
+route('GET', '/api/movements', { perm: 'movimentos:ver' }, async ctx => {
+  const f = { tipo: ctx.query.tipo, from: ctx.query.from, to: ctx.query.to };
+  return comTotal(ctx, 'movements', await db.getMovimentacoes({ ...f, ...pagina(ctx) }), () => db.contarMovimentacoes(f));
+});
 route('POST', '/api/movements', { perm: 'movimentos:registrar' }, async ctx => {
   const movs = await db.registrarMovimentacoes(ctx.body, ctx.user);
   const tipo = ctx.body.tipo_movimentacao;
@@ -247,7 +255,10 @@ route('POST', '/api/losses', { perm: 'movimentos:registrar' }, async ctx => {
 });
 
 // ---------------- vendas
-route('GET', '/api/sales', { perm: 'vendas:ver' }, async ctx => ok({ sales: await db.getVendas({ from: ctx.query.from, to: ctx.query.to, q: ctx.query.q, status: ctx.query.status }) }));
+route('GET', '/api/sales', { perm: 'vendas:ver' }, async ctx => {
+  const f = { from: ctx.query.from, to: ctx.query.to, q: ctx.query.q, status: ctx.query.status };
+  return comTotal(ctx, 'sales', await db.getVendas({ ...f, ...pagina(ctx) }), () => db.contarVendas(f));
+});
 route('GET', '/api/sales/:id', { perm: 'vendas:ver' }, async ctx => {
   const v = await db.getVenda(ctx.params.id);
   if (!v) throw new HttpError(404, 'Venda não encontrada');
@@ -438,7 +449,10 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
-  db.testarConexao().then(() => {
+  db.testarConexao().then(() => db.verificarEsquema().catch(err => {
+    console.error(`[GestFast ERP] ${err.message}`);
+    process.exit(1);
+  })).then(() => {
     server.listen(PORT, () => {
       console.log(`[GestFast ERP] Servidor rodando em http://localhost:${PORT}`);
       console.log(`[GestFast ERP] Banco MySQL: ${process.env.DB_NAME || 'gestfast'} em ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 3306}`);

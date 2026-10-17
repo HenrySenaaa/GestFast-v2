@@ -329,3 +329,64 @@ test('Etapa 2: relatório de desperdício com exportação', async () => {
   const f = await logar('henry@padarianovayork.com', 'novasenha1');
   assert.equal((await f.get('/api/reports/losses')).status, 403);
 });
+
+test('v2: listagens paginadas com total (sem limit continua devolvendo tudo)', async () => {
+  const a = await admin();
+  const todas = await a.get('/api/sales');
+  assert.equal(todas.total, undefined);
+  const p1 = await a.get('/api/sales?limit=2');
+  assert.equal(p1.sales.length, Math.min(2, todas.sales.length));
+  assert.equal(p1.total, todas.sales.length);
+  assert.deepEqual(p1.sales.map(v => v.id_venda), todas.sales.slice(0, 2).map(v => v.id_venda));
+  const p2 = await a.get('/api/sales?limit=2&offset=2');
+  assert.deepEqual(p2.sales.map(v => v.id_venda), todas.sales.slice(2, 4).map(v => v.id_venda));
+  assert.ok(p1.sales.every(v => Array.isArray(v.itens) && v.usuario_nome));
+  const movs = await a.get('/api/movements?tipo=Saída');
+  const pm = await a.get('/api/movements?tipo=Saída&limit=3');
+  assert.equal(pm.total, movs.movements.length);
+  assert.deepEqual(pm.movements, movs.movements.slice(0, 3));
+  const reqs = await a.get('/api/requisitions');
+  const pr = await a.get('/api/requisitions?limit=1&offset=1');
+  assert.equal(pr.total, reqs.requisicoes.length);
+  assert.deepEqual(pr.requisicoes, reqs.requisicoes.slice(1, 2));
+  assert.ok(reqs.requisicoes.every(r => r.numero_pedido === undefined)); // coluna interna não vai para a API
+  // filtros junto com paginação
+  const v = todas.sales[0];
+  const busca = await a.get(`/api/sales?q=${encodeURIComponent(v.itens[0].nome_produto)}&limit=50`);
+  assert.ok(busca.sales.some(x => x.id_venda === v.id_venda));
+  assert.equal(busca.total, busca.sales.length);
+  const invalido = await a.get('/api/sales?limit=abc'); // limit inválido = sem paginação
+  assert.equal(invalido.sales.length, todas.sales.length);
+});
+
+test('v2: painel com vendas dos últimos 7 dias e relatório de vendas consistente', async () => {
+  const a = await admin();
+  const dash = (await a.get('/api/dashboard')).data;
+  assert.equal(dash.vendasSemana.length, 7);
+  const hoje = dash.vendasSemana[6];
+  assert.equal(hoje.dia, db.util.dataISO());
+  assert.equal(hoje.total.toFixed(2), dash.metricas.totalVendasHoje);
+  assert.equal(hoje.vendas, dash.metricas.vendasHojeCount);
+  const r = (await a.get('/api/reports/sales')).report;
+  const soma = (l, k) => Math.round(l.reduce((s, x) => s + x[k], 0) * 100) / 100;
+  assert.equal(soma(r.transacoes, 'valor_total'), r.totalGeral);
+  assert.equal(soma(r.itensVendidos, 'total'), r.totalBruto);
+  assert.equal(soma(r.porPagamento, 'total'), r.totalGeral);
+  for (let i = 1; i < r.itensVendidos.length; i++) assert.ok(r.itensVendidos[i - 1].total >= r.itensVendidos[i].total);
+  const est = (await a.get('/api/reports/stock')).report;
+  const [[m]] = await db.pool.query("SELECT COALESCE(SUM(quantidade), 0) AS e FROM movimentacao_estoque m JOIN produto p ON p.id_produto = m.id_produto WHERE p.status = 'Ativo' AND tipo_movimentacao = 'Entrada'");
+  assert.equal(Math.round(est.linhas.reduce((s, l) => s + l.entradas, 0) * 1000) / 1000, Math.round(m.e * 1000) / 1000);
+});
+
+test('v2: esquema otimizado (índices e código da requisição pelo índice)', async () => {
+  await db.verificarEsquema();
+  const idx = (await db.query("SELECT DISTINCT index_name AS n FROM information_schema.statistics WHERE table_schema = DATABASE()")).map(r => r.n);
+  for (const n of ['idx_venda_status_data', 'idx_mov_origem_data', 'idx_mov_tipo_data', 'idx_produto_validade', 'idx_requisicao_situacao', 'idx_requisicao_numero', 'idx_sessao_expira', 'idx_token_reset_expira']) {
+    assert.ok(idx.includes(n), `índice ${n} ausente`);
+  }
+  const [[mx]] = await db.pool.query('SELECT MAX(CAST(SUBSTRING(codigo_pedido, 5) AS UNSIGNED)) AS n FROM requisicao');
+  const a = await admin();
+  const r = await a.post('/api/requisitions', { fornecedor: (await a.get('/api/suppliers')).suppliers[0], produto_nome: 'Item de teste v2', quantidade_pedida: 2 });
+  assert.equal(r.status, 201, r.error);
+  assert.equal(r.requisicao.codigo_pedido, `REQ-${Number(mx.n) + 1}`);
+});
