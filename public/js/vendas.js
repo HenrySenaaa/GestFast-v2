@@ -49,7 +49,7 @@
     const corpo = $('#pdv-carrinho-corpo');
     corpo.innerHTML = cart.length ? cart.map((i, ix) => `<tr data-ix="${ix}" class="row-select ${selItem === ix ? 'row-selected' : ''}">
       <td>${esc(i.nome)}</td><td>${GF.num2(i.preco)}</td><td>${GF.qty(i.qtd)} ${esc(i.unidade)}</td><td>${GF.num2(i.qtd * i.preco)}</td>
-      <td><button class="btn-icon btn-action-cancel" data-rem="${ix}" title="Remover item" aria-label="Remover ${esc(i.nome)}">🗑</button></td></tr>`).join('')
+      <td><button class="btn-icon btn-action-cancel" data-rem="${ix}" title="Remover item" aria-label="Remover ${esc(i.nome)}">${GF.icon('trash')}</button></td></tr>`).join('')
       : '<tr><td colspan="5" class="empty-cell">Nenhum item na venda. Selecione um produto e clique em "Inserir no Pedido".</td></tr>';
     const t = totais();
     $('#pdv-linhas-totais').innerHTML = `<span>Subtotal: <strong>${GF.money(t.sub)}</strong></span><span>Desconto: <strong>- ${GF.money(t.desc)}</strong></span>`;
@@ -148,24 +148,27 @@
   let vendas = [];
   const badgeV = s => `<span class="badge-status-pill ${s === 'Concluída' ? 'badge-success' : 'badge-urgent'}">${esc(s)}</span>`;
 
-  async function carregarHist() {
-    const q = [`from=${$('#hist-de').value}`, `to=${$('#hist-ate').value}`, `q=${encodeURIComponent($('#hist-busca').value.trim())}`, `status=${encodeURIComponent($('#hist-status').value)}`].join('&');
+  // Lista paginada (50 por página); total e faturamento vêm do servidor para o filtro inteiro.
+  async function carregarHist(offset = 0) {
+    if (typeof offset !== 'number') offset = 0; // chamado direto por eventos
+    const q = [`from=${$('#hist-de').value}`, `to=${$('#hist-ate').value}`, `q=${encodeURIComponent($('#hist-busca').value.trim())}`, `status=${encodeURIComponent($('#hist-status').value)}`, `limit=${GF.POR_PAGINA}`, `offset=${offset}`].join('&');
     try {
-      vendas = (await GF.get(`/api/sales?${q}`)).sales;
-      const conc = vendas.filter(v => v.status_venda === 'Concluída');
-      $('#hist-resumo').textContent = `${vendas.length} venda(s) • faturamento ${GF.money(conc.reduce((a, v) => a + v.valor_total, 0))}`;
+      const r = await GF.get(`/api/sales?${q}`);
+      vendas = r.sales;
+      $('#hist-resumo').textContent = `${r.total.toLocaleString('pt-BR')} venda(s) • faturamento ${GF.money(r.faturamento)}`;
+      GF.pager($('#hist-pager'), { total: r.total, offset, ir: carregarHist });
       $('#hist-tabela-corpo').innerHTML = vendas.length ? vendas.map(v => `<tr data-id="${v.id_venda}" class="${v.status_venda === 'Cancelada' ? 'row-inactive' : ''}">
         <td><strong>${esc(v.codigo_venda)}</strong></td><td>${GF.date(v.data_venda)}</td><td>${esc(v.usuario_nome)}</td><td>${esc(v.forma_pagamento)}</td>
         <td class="cell-itens">${esc(v.itens.map(i => `${i.nome_produto} x${GF.qty(i.quantidade)}`).join(', '))}</td>
         <td>${GF.money(v.valor_total)}${v.desconto ? `<br><small class="muted">desc. ${GF.money(v.desconto)}</small>` : ''}</td>
         <td>${badgeV(v.status_venda)}${v.data_edicao ? '<br><small class="muted">editada</small>' : ''}</td>
         <td class="col-acoes">
-          <button class="btn-icon btn-action-info" data-act="ver" title="Ver detalhes" aria-label="Ver ${esc(v.codigo_venda)}">👁</button>
-          ${v.status_venda === 'Concluída' && GF.can('vendas:editar') ? `<button class="btn-icon btn-action-next" data-act="editar" title="Editar quantidades" aria-label="Editar ${esc(v.codigo_venda)}">✎</button>` : ''}
-          ${v.status_venda === 'Concluída' && GF.can('vendas:cancelar') ? `<button class="btn-icon btn-action-cancel" data-act="cancelar" title="Cancelar venda" aria-label="Cancelar ${esc(v.codigo_venda)}">✕</button>` : ''}
-          ${GF.can('vendas:excluir') ? `<button class="btn-icon btn-action-trash" data-act="excluir" title="Excluir registro" aria-label="Excluir ${esc(v.codigo_venda)}">🗑</button>` : ''}
+          <button class="btn-icon btn-action-info" data-act="ver" title="Ver detalhes" aria-label="Ver ${esc(v.codigo_venda)}">${GF.icon('eye')}</button>
+          ${v.status_venda === 'Concluída' && GF.can('vendas:editar') ? `<button class="btn-icon btn-action-next" data-act="editar" title="Editar quantidades" aria-label="Editar ${esc(v.codigo_venda)}">${GF.icon('edit')}</button>` : ''}
+          ${v.status_venda === 'Concluída' && GF.can('vendas:cancelar') ? `<button class="btn-icon btn-action-cancel" data-act="cancelar" title="Cancelar venda" aria-label="Cancelar ${esc(v.codigo_venda)}">${GF.icon('x')}</button>` : ''}
+          ${GF.can('vendas:excluir') ? `<button class="btn-icon btn-action-trash" data-act="excluir" title="Excluir registro" aria-label="Excluir ${esc(v.codigo_venda)}">${GF.icon('trash')}</button>` : ''}
         </td></tr>`).join('') : '<tr><td colspan="8" class="empty-cell">Nenhuma venda encontrada para os filtros informados.</td></tr>';
-    } catch (e) { $('#hist-tabela-corpo').innerHTML = '<tr><td colspan="8" class="empty-cell">Falha ao carregar o histórico de vendas.</td></tr>'; }
+    } catch (e) { $('#hist-tabela-corpo').innerHTML = '<tr><td colspan="8" class="empty-cell">Falha ao carregar o histórico de vendas.</td></tr>'; $('#hist-pager').innerHTML = ''; }
   }
 
   function detalhes(v) {
@@ -256,6 +259,12 @@
     });
     $('#pdv-btn-limpar-carrinho').addEventListener('click', async () => { if (!cart.length || await GF.confirm('Descartar todos os itens da venda atual?', { danger: true, okLabel: 'Limpar venda' })) limparVenda(); });
     $('#pdv-btn-finalizar-venda').addEventListener('click', finalizar);
+    // Atalhos do caixa: F2 busca produto, F4 finaliza (só com o caixa aberto e nenhum modal na frente).
+    document.addEventListener('keydown', e => {
+      if (GF.state.currentView !== 'vendas' || GF.$('.modal-backdrop:not(.is-hidden)')) return;
+      if (e.key === 'F2') { e.preventDefault(); $('#pdv-busca-codigo').focus(); $('#pdv-busca-codigo').select(); }
+      else if (e.key === 'F4') { e.preventDefault(); if (!$('#pdv-btn-finalizar-venda').disabled) finalizar(); }
+    });
     ['#pdv-desconto', '#pdv-desconto-tipo', '#pdv-recebido'].forEach(s => $(s).addEventListener('input', () => renderCart()));
     $('#pdv-forma-pagamento').addEventListener('change', () => atualizarTroco());
     $('#pdv-carrinho-corpo').addEventListener('click', e => {

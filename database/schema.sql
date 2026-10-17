@@ -235,8 +235,24 @@ CREATE TABLE relatorio (
   FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario)
 ) ENGINE=InnoDB;
 
+-- ---------------------------------------------------------------------
+-- Índices (cada um atende a uma consulta do db.js; ver README, seção "Banco otimizado")
+-- ---------------------------------------------------------------------
 CREATE INDEX idx_venda_data ON venda(data_venda);
+CREATE INDEX idx_venda_status_data ON venda(status_venda, data_venda);           -- painel (vendas de hoje) e relatório de vendas
 CREATE INDEX idx_mov_produto_data ON movimentacao_estoque(id_produto, data_movimentacao);
 CREATE INDEX idx_mov_data ON movimentacao_estoque(data_movimentacao);
+CREATE INDEX idx_mov_origem_data ON movimentacao_estoque(origem, data_movimentacao);  -- relatório de desperdício (origem = 'perda')
+CREATE INDEX idx_mov_tipo_data ON movimentacao_estoque(tipo_movimentacao, data_movimentacao); -- telas de Entradas e Saídas
 CREATE INDEX idx_produto_status ON produto(status, id_categoria);
+CREATE INDEX idx_produto_validade ON produto(status, validade);                  -- alerta de validade
 CREATE INDEX idx_alerta_status ON alerta_estoque(status_alerta, id_produto);
+CREATE INDEX idx_requisicao_situacao ON requisicao(situacao);                    -- requisições em aberto (painel)
+CREATE INDEX idx_sessao_expira ON sessao(expira);                                -- limpeza das sessões vencidas
+CREATE INDEX idx_token_reset_expira ON token_reset(expira);
+
+-- Número do pedido (REQ-9661 -> 9661) calculado pelo banco e indexado: o próximo código sai do índice,
+-- sem ler a tabela inteira.
+ALTER TABLE requisicao
+  ADD COLUMN numero_pedido INT UNSIGNED AS (CAST(SUBSTRING(codigo_pedido, 5) AS UNSIGNED)) VIRTUAL,
+  ADD INDEX idx_requisicao_numero (numero_pedido);

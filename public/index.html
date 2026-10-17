@@ -4,16 +4,69 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GestFast - ERP Padaria Nova York</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f2429'/%3E%3Ctext x='16' y='22' font-size='16' font-weight='700' text-anchor='middle' fill='%23f97316' font-family='Arial'%3EG%3C/text%3E%3C/svg%3E">
+  <meta name="theme-color" content="#c2410c">
+  <script src="js/theme.js"></script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23c2410c'/%3E%3Ctext x='16' y='22' font-size='17' font-weight='800' text-anchor='middle' fill='%23ffffff' font-family='Arial'%3EG%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Ícones (traço 24x24, estilo Lucide). Uso: <svg class="icon"><use href="#i-nome"/></svg> -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
+    <symbol id="i-out" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></symbol>
+    <symbol id="i-in" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></symbol>
+    <symbol id="i-cart" viewBox="0 0 24 24"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.4a1 1 0 0 0 1 .8h9.6a1 1 0 0 0 1-.8L21 7H6"/></symbol>
+    <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15v2M11 11v6M15 7v10M19 12v5"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14a6 6 0 0 1 3 6"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></symbol>
+    <symbol id="i-chevrons-left" viewBox="0 0 24 24"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-truck" viewBox="0 0 24 24"><path d="M3 6h11v10H3zM14 9h4l3 3v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M3 21v-5h5"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 3v5h8M7 21v-7h10v7"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l4 2"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></symbol>
+    <symbol id="i-sheet" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M18 5l2 2"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+    <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-coins" viewBox="0 0 24 24"><ellipse cx="9" cy="7" rx="6" ry="3"/><path d="M3 7v5c0 1.7 2.7 3 6 3s6-1.3 6-3V7M3 12v5c0 1.7 2.7 3 6 3 1.4 0 2.6-.2 3.6-.6"/><circle cx="17" cy="16" r="4"/></symbol>
+    <symbol id="i-ticket" viewBox="0 0 24 24"><path d="M3 9a3 3 0 0 0 0 6v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-3a3 3 0 0 1 0-6V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1z"/><path d="M14 5v14" stroke-dasharray="2 2"/></symbol>
+    <symbol id="i-percent" viewBox="0 0 24 24"><path d="M19 5 5 19"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+  </svg>
   <!-- ============================================== -->
   <!-- TELA DE LOGIN (Caso de uso "Manter Login")     -->
   <!-- ============================================== -->
   <div id="login-screen" class="login-screen is-hidden">
     <div class="login-card">
-      <div class="gestfast-logo login-logo"><span class="logo-gest">GEST</span><span class="logo-fast">FAST#</span></div>
+      <div class="gestfast-logo login-logo"><span class="logo-mark">G</span><span class="logo-gest">Gest</span><span class="logo-fast">Fast</span></div>
       <p class="login-sub">Gestão de estoque e vendas para panificadoras</p>
 
       <form id="form-login" novalidate>
@@ -63,23 +116,23 @@
   <!-- Cabeçalho Superior Global (Figuras 5, 7, 9, 11, 14, 15, 17, 19, 20) -->
   <header class="top-header">
     <div class="header-left">
-      <button class="nav-icon-circle-btn menu-toggle" id="btn-menu-toggle" aria-label="Abrir menu" title="Menu">☰</button>
+      <button class="nav-icon-circle-btn menu-toggle" id="btn-menu-toggle" aria-label="Abrir menu" title="Menu"><svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg></button>
       <div class="gestfast-logo" id="logo-header-home" title="Ir para o Início">
-        <span class="logo-gest">GEST</span>
-        <span class="logo-fast">FAST#</span>
+        <span class="logo-mark">G</span><span class="logo-gest">Gest</span><span class="logo-fast">Fast</span>
       </div>
       <button class="nav-icon-circle-btn" id="btn-header-home" title="Voltar ao Início" aria-label="Voltar ao Início">
-        <span class="home-icon">🏠</span>
+        <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg>
       </button>
     </div>
 
     <!-- Barra de pesquisa global com predição -->
     <div class="search-container">
       <div class="search-input-wrapper">
-        <span class="search-icon">🔍</span>
-        <input type="text" id="global-search" placeholder="Para onde deseja ir ou o que procura? (ex: estoque, pão, REQ-9661, venda...)" autocomplete="off" aria-label="Buscar opções e telas do sistema" title="Buscar opções do sistema">
+        <span class="search-icon"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></span>
+        <input type="text" id="global-search" placeholder="Buscar telas, produtos, pedidos ou vendas…" autocomplete="off" aria-label="Buscar opções e telas do sistema" title="Buscar opções do sistema">
         <span id="search-predictive-hint" class="search-ghost-hint"></span>
         <button id="search-clear-btn" class="clear-btn is-hidden" aria-label="Limpar pesquisa" title="Limpar pesquisa">&times;</button>
+        <kbd class="search-kbd" aria-hidden="true">Ctrl K</kbd>
       </div>
       <div id="search-results-dropdown" class="search-dropdown is-hidden">
         <div class="search-dropdown-header">Opções e Telas do Sistema:</div>
@@ -88,19 +141,20 @@
     </div>
 
     <div class="header-right">
+      <button class="nav-icon-circle-btn" id="btn-theme" type="button" aria-label="Alternar tema claro ou escuro" title="Tema claro / escuro"><svg class="icon" aria-hidden="true"><use href="#i-moon"/></svg></button>
       <div class="user-menu-wrap">
         <button class="user-profile-header" id="user-menu-btn" aria-haspopup="true" aria-expanded="false" title="Menu do usuário" type="button">
-          <div class="user-avatar-circle" id="user-avatar"><span class="avatar-icon">👤</span></div>
+          <div class="user-avatar-circle" id="user-avatar"><span class="avatar-icon">?</span></div>
           <div class="user-info-text">
             <span class="user-name" id="header-user-name">-</span>
             <span class="user-role" id="header-user-role">-</span>
           </div>
         </button>
         <div class="user-menu is-hidden" id="user-menu" role="menu">
-          <button role="menuitem" id="um-senha" type="button">🔑 Alterar minha senha</button>
+          <button role="menuitem" id="um-senha" type="button"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg> Alterar minha senha</button>
           <div class="user-menu-row"><span>Tamanho do texto</span><span class="user-menu-btns"><button class="a11y-btn" id="btn-font-minus" type="button" aria-label="Diminuir tamanho do texto">A-</button><button class="a11y-btn" id="btn-font-plus" type="button" aria-label="Aumentar tamanho do texto">A+</button></span></div>
-          <button role="menuitem" id="btn-contrast" type="button" aria-pressed="false">◐ Alto contraste</button>
-          <button role="menuitem" class="danger" id="btn-logout" type="button">⏻ Sair do sistema</button>
+          <button role="menuitem" id="btn-contrast" type="button" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-contrast"/></svg> Alto contraste</button>
+          <button role="menuitem" class="danger" id="btn-logout" type="button"><svg class="icon" aria-hidden="true"><use href="#i-logout"/></svg> Sair do sistema</button>
         </div>
       </div>
     </div>
@@ -108,24 +162,26 @@
 
   <div class="app-layout">
     <aside class="sidebar" id="sidebar">
-      <nav class="sidebar-nav">
-        <a href="#dashboard" class="nav-item active" data-view="dashboard" data-perm="dashboard:ver"><span class="nav-text">Início</span></a>
-        <a href="#estoque" class="nav-item" data-view="estoque" data-perm="estoque:conferir"><span class="nav-text">Verificar Estoque</span></a>
-        <a href="#requisicoes" class="nav-item" data-view="requisicoes" data-perm="requisicoes:ver"><span class="nav-text">Requisição</span></a>
-        <a href="#cadastro" class="nav-item" data-view="cadastro" data-perm="produtos:editar"><span class="nav-text">Cadastro de Produtos</span></a>
-        <a href="#saidas" class="nav-item" data-view="saidas" data-perm="movimentos:ver"><span class="nav-text">Saída de Produtos</span></a>
-        <a href="#entradas" class="nav-item" data-view="entradas" data-perm="movimentos:ver"><span class="nav-text">Entrada de Produtos</span></a>
-        <a href="#vendas" class="nav-item" data-view="vendas" data-perm="vendas:vender"><span class="nav-text">Venda</span></a>
-        <a href="#historico" class="nav-item" data-view="historico" data-perm="vendas:ver"><span class="nav-text">Histórico de Vendas</span></a>
-        <a href="#relatorios" class="nav-item" data-view="relatorios" data-perm="relatorios:ver"><span class="nav-text">Relatórios</span></a>
-        <a href="#funcionarios" class="nav-item" data-view="funcionarios" data-perm="usuarios:gerir"><span class="nav-text">Funcionários</span></a>
-        <div class="sidebar-separator"></div>
-        <a href="#configuracoes" class="nav-item nav-secondary" data-view="configuracoes"><span class="nav-text">Configuração</span></a>
-        <a href="#ajuda" class="nav-item nav-secondary" data-view="ajuda"><span class="nav-text">Ajuda</span></a>
+      <nav class="sidebar-nav" aria-label="Menu principal">
+        <a href="#dashboard" class="nav-item active" data-view="dashboard" data-perm="dashboard:ver" title="Início"><svg class="nav-ico" aria-hidden="true"><use href="#i-home"/></svg><span class="nav-text">Início</span></a>
+        <div class="nav-group-label">Estoque</div>
+        <a href="#estoque" class="nav-item" data-view="estoque" data-perm="estoque:conferir" title="Verificar Estoque"><svg class="nav-ico" aria-hidden="true"><use href="#i-box"/></svg><span class="nav-text">Verificar Estoque</span></a>
+        <a href="#entradas" class="nav-item" data-view="entradas" data-perm="movimentos:ver" title="Entrada de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-in"/></svg><span class="nav-text">Entrada de Produtos</span></a>
+        <a href="#saidas" class="nav-item" data-view="saidas" data-perm="movimentos:ver" title="Saída de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-out"/></svg><span class="nav-text">Saída de Produtos</span></a>
+        <a href="#requisicoes" class="nav-item" data-view="requisicoes" data-perm="requisicoes:ver" title="Requisição"><svg class="nav-ico" aria-hidden="true"><use href="#i-clipboard"/></svg><span class="nav-text">Requisição</span></a>
+        <a href="#cadastro" class="nav-item" data-view="cadastro" data-perm="produtos:editar" title="Cadastro de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-tag"/></svg><span class="nav-text">Cadastro de Produtos</span></a>
+        <div class="nav-group-label">Vendas</div>
+        <a href="#vendas" class="nav-item" data-view="vendas" data-perm="vendas:vender" title="Venda"><svg class="nav-ico" aria-hidden="true"><use href="#i-cart"/></svg><span class="nav-text">Venda</span></a>
+        <a href="#historico" class="nav-item" data-view="historico" data-perm="vendas:ver" title="Histórico de Vendas"><svg class="nav-ico" aria-hidden="true"><use href="#i-receipt"/></svg><span class="nav-text">Histórico de Vendas</span></a>
+        <a href="#relatorios" class="nav-item" data-view="relatorios" data-perm="relatorios:ver" title="Relatórios"><svg class="nav-ico" aria-hidden="true"><use href="#i-chart"/></svg><span class="nav-text">Relatórios</span></a>
+        <div class="nav-group-label">Sistema</div>
+        <a href="#funcionarios" class="nav-item" data-view="funcionarios" data-perm="usuarios:gerir" title="Funcionários"><svg class="nav-ico" aria-hidden="true"><use href="#i-users"/></svg><span class="nav-text">Funcionários</span></a>
+        <a href="#configuracoes" class="nav-item nav-secondary" data-view="configuracoes" title="Configuração"><svg class="nav-ico" aria-hidden="true"><use href="#i-settings"/></svg><span class="nav-text">Configuração</span></a>
+        <a href="#ajuda" class="nav-item nav-secondary" data-view="ajuda" title="Ajuda"><svg class="nav-ico" aria-hidden="true"><use href="#i-help"/></svg><span class="nav-text">Ajuda</span></a>
       </nav>
       <div class="sidebar-footer">
-        <span class="footer-title">GestFast v1.3</span>
-        <span class="footer-desc">USCS - ADS</span>
+        <div class="sidebar-footer-text"><span class="footer-title">GestFast v2.0</span><span class="footer-desc">USCS - ADS</span></div>
+        <button class="sidebar-collapse-btn" id="btn-sidebar-collapse" type="button" aria-label="Recolher menu" title="Recolher menu"><svg class="icon" aria-hidden="true"><use href="#i-chevrons-left"/></svg></button>
       </div>
     </aside>
     <div class="sidebar-scrim" id="sidebar-scrim"></div>
@@ -134,52 +190,62 @@
 
       <!-- 1. DASHBOARD -->
       <section id="view-dashboard" class="app-view active">
-        <div class="realtime-status-banner">
-          <div class="status-indicator">
-            <span class="live-dot"></span>
-            <span class="status-text"><strong>Sincronização em Tempo Real Ativa</strong> • <span id="dash-interval-text">atualização periódica a cada 3s</span></span>
+        <div class="page-head">
+          <div>
+            <h1 class="page-title" id="dash-saudacao">Início</h1>
+            <p class="page-sub" id="dash-data-hoje">Resumo do dia</p>
           </div>
-          <div class="realtime-meta">
-            <span id="dash-last-sync-time">Última checagem: agora</span>
-            <button class="btn-refresh-pill" id="btn-dash-force-sync" title="Forçar sincronização imediata">🔄 Sincronizar</button>
+          <div class="realtime-status-banner">
+            <div class="status-indicator">
+              <span class="live-dot"></span>
+              <span class="status-text"><strong>Ao vivo</strong> <span id="dash-interval-text">atualização periódica a cada 3s</span></span>
+            </div>
+            <div class="realtime-meta">
+              <span id="dash-last-sync-time">Última checagem: agora</span>
+              <button class="btn-refresh-pill" id="btn-dash-force-sync" title="Forçar sincronização imediata"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-refresh"/></svg> Sincronizar</button>
+            </div>
           </div>
         </div>
 
-        <div id="dash-error" class="inline-error is-hidden" role="alert">Não foi possível carregar os gráficos no momento. Tente atualizar a página.</div>
+        <div id="dash-error" class="inline-error is-hidden" role="alert">Não foi possível carregar o painel no momento. Tente atualizar a página.</div>
 
-        <div class="figma-dashboard-grid">
-          <div class="figma-dash-left">
-            <div class="figma-card card-alertas">
-              <div class="figma-card-header"><h2>Alertas</h2></div>
-              <div class="figma-card-body"><div id="dash-alertas-figma-list" class="alertas-figma-list"></div></div>
+        <div class="kpi-grid" id="dash-kpis" aria-live="polite">
+          <div class="skeleton sk-kpi"></div><div class="skeleton sk-kpi"></div><div class="skeleton sk-kpi"></div><div class="skeleton sk-kpi"></div><div class="skeleton sk-kpi"></div>
+        </div>
+
+        <div class="dash-grid">
+          <div class="figma-card card-semana span-2">
+            <div class="figma-card-header"><h2><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg> Vendas dos últimos 7 dias</h2><span class="toolbar-hint" id="dash-semana-resumo"></span></div>
+            <div class="figma-card-body"><div id="dash-semana-chart" class="bar-chart" role="img" aria-label="Gráfico de vendas dos últimos 7 dias"></div></div>
+          </div>
+          <div class="figma-card card-grafico">
+            <div class="figma-card-header"><h2><svg class="icon" aria-hidden="true"><use href="#i-box"/></svg> Estoque por categoria</h2><span class="live-pill-tag">Ao vivo</span></div>
+            <div class="figma-card-body chart-body-wrapper">
+              <div class="donut" id="dash-donut" role="img" aria-label="Gráfico de distribuição do estoque por categoria"></div>
+              <div class="figma-chart-legend" id="dash-chart-legend"></div>
             </div>
-            <div class="figma-card card-validade">
-              <div class="figma-card-header"><h2>Validade</h2><span class="toolbar-hint" id="dash-validade-resumo"></span></div>
-              <div class="figma-card-body"><div id="dash-validade-list" class="alertas-figma-list"></div></div>
-            </div>
-            <div class="figma-card card-compras">
-              <div class="figma-card-header">
-                <h2>Compras</h2>
-                <button class="btn btn-sm btn-primary" id="btn-dash-nova-requisicao" data-perm="requisicoes:criar">+ Nova Requisição</button>
+            <div class="figma-card-footer">
+              <div class="quick-shortcuts">
+                <button class="shortcut-pill" id="dash-btn-ir-estoque"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-box"/></svg> Estoque</button>
+                <button class="shortcut-pill" id="dash-btn-ir-pdv" data-perm="vendas:vender"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-cart"/></svg> Caixa</button>
+                <button class="shortcut-pill" id="dash-btn-ir-requisicao"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-clipboard"/></svg> Requisições</button>
               </div>
-              <div class="figma-card-body"><div id="dash-compras-figma-list" class="compras-figma-list"></div></div>
             </div>
           </div>
-          <div class="figma-dash-right">
-            <div class="figma-card card-grafico">
-              <div class="figma-card-header"><h2>Distribuição de Estoque</h2><span class="live-pill-tag">Ao Vivo</span></div>
-              <div class="figma-card-body chart-body-wrapper">
-                <canvas id="stockDistributionCanvas" width="220" height="220" role="img" aria-label="Gráfico de distribuição do estoque por categoria"></canvas>
-                <div class="figma-chart-legend" id="dash-chart-legend"></div>
-              </div>
-              <div class="figma-card-footer">
-                <div class="quick-shortcuts">
-                  <button class="shortcut-pill" id="dash-btn-ir-estoque">📦 Abrir Estoque</button>
-                  <button class="shortcut-pill" id="dash-btn-ir-pdv" data-perm="vendas:vender">🛒 Abrir Caixa</button>
-                  <button class="shortcut-pill" id="dash-btn-ir-requisicao">📝 Requisições</button>
-                </div>
-              </div>
+          <div class="figma-card card-alertas">
+            <div class="figma-card-header"><h2><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg> Estoque mínimo</h2></div>
+            <div class="figma-card-body"><div id="dash-alertas-figma-list" class="alertas-figma-list"></div></div>
+          </div>
+          <div class="figma-card card-validade">
+            <div class="figma-card-header"><h2><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg> Validade</h2><span class="toolbar-hint" id="dash-validade-resumo"></span></div>
+            <div class="figma-card-body"><div id="dash-validade-list" class="alertas-figma-list"></div></div>
+          </div>
+          <div class="figma-card card-compras">
+            <div class="figma-card-header">
+              <h2><svg class="icon" aria-hidden="true"><use href="#i-truck"/></svg> Compras</h2>
+              <button class="btn btn-sm btn-primary" id="btn-dash-nova-requisicao" data-perm="requisicoes:criar"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"/></svg> Nova</button>
             </div>
+            <div class="figma-card-body"><div id="dash-compras-figma-list" class="compras-figma-list"></div></div>
           </div>
         </div>
       </section>
@@ -189,7 +255,7 @@
         <div class="figma-tab-header">
           <div class="figma-tab-title-pill">Verificar Estoque</div>
           <div class="tab-header-actions">
-            <button class="btn btn-primary" id="btn-salvar-conferencia">💾 Salvar Conferência Física</button>
+            <button class="btn btn-primary" id="btn-salvar-conferencia"><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg> Salvar conferência</button>
           </div>
         </div>
         <div class="figma-card full-panel">
@@ -199,7 +265,7 @@
             <label class="checkbox-label"><input type="checkbox" id="estoque-apenas-criticos"> Apenas nível crítico</label>
             <label class="checkbox-label"><input type="checkbox" id="estoque-apenas-validade"> Apenas vencidos / vencendo</label>
             <span class="toolbar-hint is-hidden" id="estoque-resumo"></span>
-            <button class="btn btn-sm btn-secondary toolbar-end" id="btn-historico-conferencias" type="button">🕘 Histórico de conferências</button>
+            <button class="btn btn-sm btn-secondary toolbar-end" id="btn-historico-conferencias" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-history"/></svg> Histórico de conferências</button>
           </div>
           <div class="table-responsive">
             <table class="figma-styled-table">
@@ -214,7 +280,7 @@
       <section id="view-requisicoes" class="app-view">
         <div class="figma-tab-header">
           <div class="figma-tab-title-pill">Requisições</div>
-          <button class="btn btn-primary" id="btn-abrir-modal-req" data-perm="requisicoes:criar">+ Nova Requisição de Compra</button>
+          <button class="btn btn-primary" id="btn-abrir-modal-req" data-perm="requisicoes:criar"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> Nova requisição</button>
         </div>
 
         <div class="figma-card requisicao-figma-showcase" id="req-showcase">
@@ -266,7 +332,7 @@
       <section id="view-cadastro" class="app-view">
         <div class="figma-tab-header">
           <div class="figma-tab-title-pill">Cadastro de Produto</div>
-          <button class="btn btn-secondary" id="btn-novo-produto-limpar">Limpar Formulário</button>
+          <button class="btn btn-secondary" id="btn-novo-produto-limpar"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"/></svg> Limpar formulário</button>
         </div>
 
         <div class="figma-cadastro-wrapper">
@@ -297,7 +363,7 @@
                 <div class="form-col-figma photo-col-figma">
                   <div class="product-preview-frame"><img id="prod-preview-img" alt="Foto do Produto" class="product-render-photo"></div>
                   <input type="file" id="prod-imagem-file" accept="image/png,image/jpeg,image/webp,image/gif" class="is-hidden" aria-label="Selecionar imagem do produto">
-                  <button type="button" class="btn-figma-upload" id="btn-upload-img">📷 Upload image</button>
+                  <button type="button" class="btn-figma-upload" id="btn-upload-img"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-camera"/></svg> Enviar foto</button>
                   <div class="figma-input-group extra-field"><label for="prod-estoque-atual">Estoque Atual Inicial</label><input type="number" id="prod-estoque-atual" class="figma-input" min="0" step="1" placeholder="10"></div>
                   <div class="figma-input-group extra-field"><label for="prod-lote">Lote</label><input type="text" id="prod-lote" class="figma-input" placeholder="546320" maxlength="40"></div>
                   <div class="figma-input-group extra-field"><label for="prod-validade">Validade</label><input type="date" id="prod-validade" class="figma-input"></div>
@@ -311,9 +377,9 @@
               </div>
 
               <div class="figma-bottom-actions">
-                <button type="submit" class="btn-figma-action action-confirm" id="btn-salvar-produto">✓ Confirmar</button>
-                <button type="button" class="btn-figma-action action-save" id="btn-save-draft">💾 Salvar</button>
-                <button type="button" class="btn-figma-action action-cancel" id="btn-cancelar-edicao">⊗ Cancelar</button>
+                <button type="submit" class="btn-figma-action action-confirm" id="btn-salvar-produto"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"/></svg> Confirmar</button>
+                <button type="button" class="btn-figma-action action-save" id="btn-save-draft"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-save"/></svg> Salvar</button>
+                <button type="button" class="btn-figma-action action-cancel" id="btn-cancelar-edicao"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"/></svg> Cancelar</button>
               </div>
             </form>
           </div>
@@ -344,12 +410,12 @@
         <div class="figma-tab-header">
           <div class="figma-tab-title-pill">Saída de produtos</div>
           <div class="tab-header-actions">
-            <button class="btn btn-secondary" id="btn-registrar-perda" data-perm="movimentos:registrar">🗑️ Registrar Perda / Sobra</button>
-            <button class="btn btn-danger" id="btn-registrar-saida-modal" data-perm="movimentos:registrar">+ Registrar Nova Saída</button>
+            <button class="btn btn-secondary" id="btn-registrar-perda" data-perm="movimentos:registrar"><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg> Registrar perda / sobra</button>
+            <button class="btn btn-danger" id="btn-registrar-saida-modal" data-perm="movimentos:registrar"><svg class="icon" aria-hidden="true"><use href="#i-out"/></svg> Registrar saída</button>
           </div>
         </div>
         <div class="figma-card full-panel">
-          <div class="filter-toolbar is-hidden">
+          <div class="filter-toolbar">
             <label class="inline-field">De <input type="date" id="saidas-de" class="select-field"></label>
             <label class="inline-field">Até <input type="date" id="saidas-ate" class="select-field"></label>
             <button class="btn btn-sm btn-secondary" id="saidas-limpar">Limpar filtros</button>
@@ -361,6 +427,7 @@
               <tbody id="saidas-tabela-corpo"></tbody>
             </table>
           </div>
+          <div class="pager" id="saidas-pager"></div>
         </div>
       </section>
 
@@ -368,10 +435,10 @@
       <section id="view-entradas" class="app-view">
         <div class="figma-tab-header">
           <div class="figma-tab-title-pill">Entrada de produtos</div>
-          <button class="btn btn-primary" id="btn-registrar-entrada-modal" data-perm="movimentos:registrar">+ Registrar Nova Entrada</button>
+          <button class="btn btn-primary" id="btn-registrar-entrada-modal" data-perm="movimentos:registrar"><svg class="icon" aria-hidden="true"><use href="#i-in"/></svg> Registrar entrada</button>
         </div>
         <div class="figma-card full-panel">
-          <div class="filter-toolbar is-hidden">
+          <div class="filter-toolbar">
             <label class="inline-field">De <input type="date" id="entradas-de" class="select-field"></label>
             <label class="inline-field">Até <input type="date" id="entradas-ate" class="select-field"></label>
             <button class="btn btn-sm btn-secondary" id="entradas-limpar">Limpar filtros</button>
@@ -383,6 +450,7 @@
               <tbody id="entradas-tabela-corpo"></tbody>
             </table>
           </div>
+          <div class="pager" id="entradas-pager"></div>
         </div>
       </section>
 
@@ -395,13 +463,15 @@
 
         <div class="figma-venda-layout">
           <div class="venda-dark-sidebar">
-            <button class="venda-dark-btn active" id="pdv-btn-abrir-adicionar" type="button">Adicionar Item</button>
-            <button class="venda-dark-btn" id="pdv-btn-remover-item-modo" type="button" title="Remove o item selecionado na lista (ou o último adicionado)">Remover Item</button>
-            <button class="venda-dark-btn" id="pdv-btn-abrir-desconto" type="button">Aplicar Desconto</button>
+            <div class="venda-actions-row">
+              <button class="venda-dark-btn active" id="pdv-btn-abrir-adicionar" type="button" title="Buscar produto (F2)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"/></svg> Item</button>
+              <button class="venda-dark-btn" id="pdv-btn-remover-item-modo" type="button" title="Remove o item selecionado na lista (ou o último adicionado)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-minus"/></svg> Remover</button>
+              <button class="venda-dark-btn" id="pdv-btn-abrir-desconto" type="button" title="Aplicar desconto"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-percent"/></svg> Desconto</button>
+            </div>
 
             <div class="venda-product-picker-box">
               <label for="pdv-busca-codigo" class="venda-picker-label">Código de barras / nome:</label>
-              <input type="text" id="pdv-busca-codigo" class="figma-input-dark" placeholder="Digite e pressione Enter" autocomplete="off">
+              <input type="text" id="pdv-busca-codigo" class="figma-input-dark" placeholder="Leia o código ou digite e tecle Enter" autocomplete="off">
 
               <label for="pdv-produto-select" class="venda-picker-label">Produto:</label>
               <select id="pdv-produto-select" class="figma-select-dark" aria-label="Selecione o produto para a venda"><option value="">Selecione...</option></select>
@@ -445,13 +515,14 @@
                 </div>
               </div>
 
-              <button class="btn-figma-add" id="pdv-btn-adicionar-item" type="button">➕ Inserir no Pedido</button>
-              <button class="btn-figma-clear" id="pdv-btn-limpar-carrinho" type="button">Limpar Venda</button>
+              <button class="btn-figma-add" id="pdv-btn-adicionar-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> Inserir no pedido</button>
+              <button class="btn-figma-clear" id="pdv-btn-limpar-carrinho" type="button">Limpar venda</button>
+              <div class="pdv-atalhos" aria-label="Atalhos do caixa"><span><kbd>F2</kbd> buscar</span><span><kbd>Enter</kbd> inserir</span><span><kbd>F4</kbd> finalizar</span></div>
             </div>
           </div>
 
           <div class="venda-center-panel figma-card">
-            <h2 class="venda-center-title">Venda</h2>
+            <h2 class="venda-center-title"><svg class="icon" aria-hidden="true"><use href="#i-cart"/></svg> Pedido atual</h2>
             <div class="table-responsive">
               <table class="figma-styled-table venda-table">
                 <thead><tr><th>Produto</th><th>Valor</th><th>Quant.</th><th>Total</th><th>Remover</th></tr></thead>
@@ -461,7 +532,7 @@
             <div class="venda-total-footer">
               <div class="venda-totals-lines" id="pdv-linhas-totais"></div>
               <div class="total-display-group"><span class="total-figma-label">R$:</span><span class="total-figma-number" id="pdv-total-final">0,00</span></div>
-              <button class="btn-finalizar-checkout" id="pdv-btn-finalizar-venda" type="button">Finalizar Venda & Baixar Estoque</button>
+              <button class="btn-finalizar-checkout" id="pdv-btn-finalizar-venda" type="button"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg> Finalizar venda <kbd>F4</kbd></button>
             </div>
           </div>
         </div>
@@ -487,6 +558,7 @@
               <tbody id="hist-tabela-corpo"></tbody>
             </table>
           </div>
+          <div class="pager" id="hist-pager"></div>
         </div>
       </section>
 
@@ -503,8 +575,8 @@
             <label class="inline-field">De <input type="date" id="rel-de" class="select-field"></label>
             <label class="inline-field">Até <input type="date" id="rel-ate" class="select-field"></label>
             <button class="btn btn-primary is-hidden" id="btn-gerar-relatorio" type="button">Gerar</button>
-            <button class="btn btn-secondary" id="btn-exportar-pdf" type="button">📄 Exportar PDF</button>
-            <button class="btn btn-secondary" id="btn-exportar-excel" type="button">📊 Exportar Excel</button>
+            <button class="btn btn-secondary" id="btn-exportar-pdf" type="button"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg> PDF</button>
+            <button class="btn btn-secondary" id="btn-exportar-excel" type="button"><svg class="icon" aria-hidden="true"><use href="#i-sheet"/></svg> Excel</button>
           </div>
         </div>
 
@@ -532,7 +604,7 @@
       <section id="view-funcionarios" class="app-view">
         <div class="figma-tab-header">
           <div class="figma-tab-title-pill">Funcionários</div>
-          <button class="btn btn-primary" id="btn-novo-funcionario">+ Cadastrar Funcionário</button>
+          <button class="btn btn-primary" id="btn-novo-funcionario"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> Cadastrar funcionário</button>
         </div>
         <div class="figma-card full-panel">
           <div class="filter-toolbar">
@@ -573,7 +645,7 @@
               <label class="checkbox-label"><input type="checkbox" id="cfg-sim-cartao"> Operadora de cartão nega as transações</label>
               <label class="checkbox-label"><input type="checkbox" id="cfg-sim-fornecedor"> Sistema do fornecedor fora do ar</label>
             </fieldset>
-            <button type="submit" class="btn btn-primary">💾 Salvar parâmetros</button>
+            <button type="submit" class="btn btn-primary"><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg> Salvar parâmetros</button>
           </form>
           <div class="config-details-list is-hidden" id="cfg-readonly"></div>
         </div>
@@ -581,7 +653,7 @@
         <div class="figma-card full-panel">
           <h3>Minha conta</h3>
           <p class="cfg-p" id="cfg-minha-conta"></p>
-          <button class="btn btn-secondary" id="btn-alterar-senha">🔑 Alterar minha senha</button>
+          <button class="btn btn-secondary" id="btn-alterar-senha"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg> Alterar minha senha</button>
         </div>
 
         <div class="figma-card full-panel">
@@ -590,13 +662,13 @@
           <div class="a11y-cfg">
             <button class="btn btn-secondary" id="cfg-font-minus">A- Diminuir texto</button>
             <button class="btn btn-secondary" id="cfg-font-plus">A+ Aumentar texto</button>
-            <button class="btn btn-secondary" id="cfg-contrast">◐ Alto contraste</button>
+            <button class="btn btn-secondary" id="cfg-contrast"><svg class="icon" aria-hidden="true"><use href="#i-contrast"/></svg> Alto contraste</button>
             <button class="btn btn-secondary" id="cfg-a11y-reset">Restaurar padrão</button>
           </div>
         </div>
 
         <div class="figma-card full-panel" id="cfg-logs-card">
-          <div class="figma-card-header"><h3>Registro de atividades (logs)</h3><button class="btn btn-sm btn-secondary" id="btn-atualizar-logs">🔄 Atualizar</button></div>
+          <div class="figma-card-header"><h3>Registro de atividades (logs)</h3><button class="btn btn-sm btn-secondary" id="btn-atualizar-logs"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-refresh"/></svg> Atualizar</button></div>
           <div class="table-responsive small-table tall">
             <table class="figma-styled-table">
               <thead><tr><th>Data/hora</th><th>Nível</th><th>Evento</th><th>Usuário</th><th>Detalhes</th></tr></thead>
@@ -642,7 +714,8 @@
             <p>• Use a barra de pesquisa no topo para ir direto a qualquer tela (ex.: digite "venda").</p>
             <p>• No caixa, digite ou leia o código de barras e pressione Enter para localizar o produto.</p>
             <p>• Produtos vendidos por unidade, pacote, dúzia ou fatia só aceitam quantidades inteiras; apenas KG e litro aceitam frações.</p>
-            <p>• Os botões A-, A+ e ◐ no topo aumentam o texto e ativam o alto contraste.</p>
+            <p>• No menu do usuário (canto superior direito) dá para aumentar o texto e ativar o alto contraste; o botão da lua alterna o tema claro/escuro.</p>
+            <p>• No caixa: <kbd>F2</kbd> busca produto, <kbd>F4</kbd> finaliza a venda e <kbd>Ctrl K</kbd> abre a busca geral.</p>
           </div>
         </div>
       </section>
@@ -670,7 +743,7 @@
           <textarea id="modal-req-obs" rows="2" maxlength="5000" placeholder="Ex: Pedido com prioridade alta para o turno da manhã..."></textarea>
           <div class="counter-wrapper"><span id="req-obs-counter" class="char-counter counter-neutral">0 / 5000 caracteres (mínimo 10)</span></div>
         </div>
-        <div class="modal-actions-single"><button type="submit" class="btn btn-primary btn-block" id="btn-enviar-requisicao">📨 Enviar Requisição</button></div>
+        <div class="modal-actions-single"><button type="submit" class="btn btn-primary btn-block" id="btn-enviar-requisicao"><svg class="icon" aria-hidden="true"><use href="#i-send"/></svg> Enviar requisição</button></div>
       </form>
     </div>
   </div>
@@ -723,7 +796,7 @@
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" id="btn-cancelar-modal-mov">Cancelar</button>
-          <button type="submit" class="btn btn-primary" id="btn-registrar-mov">Registrar Movimentação</button>
+          <button type="submit" class="btn btn-primary" id="btn-registrar-mov">Registrar movimentação</button>
         </div>
       </form>
     </div>

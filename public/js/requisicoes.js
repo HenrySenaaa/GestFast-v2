@@ -32,7 +32,7 @@
       const aberta = ABERTAS.includes(r.situacao);
       const avancar = GF.can('requisicoes:avancar') && aberta && r.situacao !== 'AF Gerada';
       const badge = r.situacao === 'Cancelado'
-        ? `<button class="badge-status-btn badge-cancelado" data-act="detalhes" title="Clique para ver o motivo do cancelamento">✕ Cancelado ℹ️</button>`
+        ? `<button class="badge-status-btn badge-cancelado" data-act="detalhes" title="Clique para ver o motivo do cancelamento">Cancelado ${GF.icon('info', 'icon icon-sm')}</button>`
         : `<span class="badge-status-pill badge-${r.situacao === 'Finalizado' ? 'info' : 'warning'} badge-click" data-act="detalhes" title="Clique para ver o histórico">${esc(r.situacao)}</span>`;
       return `<tr class="row-select ${selecionada === r.id_requisicao ? 'row-selected' : ''}" data-id="${r.id_requisicao}">
         <td><strong>${esc(r.codigo_pedido)}</strong></td><td>${esc(r.fornecedor)}</td><td>${esc(r.produto_nome)}</td>
@@ -42,9 +42,9 @@
         <td><small>${esc(r.data_pedido)}</small></td><td><small>${esc(r.previsao_entrega)}</small></td>
         <td>${badge}</td>
         <td>${aberta ? `
-          ${GF.can('requisicoes:receber') ? `<button class="btn-icon btn-action-accept" data-act="receber" title="Confirmar e Receber Mercadoria (Entrada no Estoque)" aria-label="Receber ${esc(r.codigo_pedido)}">✔</button>` : ''}
-          ${avancar ? `<button class="btn-icon btn-action-next" data-act="avancar" title="${r.situacao === 'Em Aberto' ? 'Marcar como cotado' : 'Gerar AF'}" aria-label="Avançar ${esc(r.codigo_pedido)}">➜</button>` : ''}
-          ${GF.can('requisicoes:cancelar') ? `<button class="btn-icon btn-action-cancel" data-act="cancelar" title="Cancelar Requisição" aria-label="Cancelar ${esc(r.codigo_pedido)}">✕</button>` : ''}` : '<span style="font-size:0.75rem; color:#6b7280;">Concluído</span>'}
+          ${GF.can('requisicoes:receber') ? `<button class="btn-icon btn-action-accept" data-act="receber" title="Confirmar e Receber Mercadoria (Entrada no Estoque)" aria-label="Receber ${esc(r.codigo_pedido)}">${GF.icon('check')}</button>` : ''}
+          ${avancar ? `<button class="btn-icon btn-action-next" data-act="avancar" title="${r.situacao === 'Em Aberto' ? 'Marcar como cotado' : 'Gerar AF'}" aria-label="Avançar ${esc(r.codigo_pedido)}">${GF.icon('arrow-right')}</button>` : ''}
+          ${GF.can('requisicoes:cancelar') ? `<button class="btn-icon btn-action-cancel" data-act="cancelar" title="Cancelar Requisição" aria-label="Cancelar ${esc(r.codigo_pedido)}">${GF.icon('x')}</button>` : ''}` : '<span style="font-size:0.75rem; color:#6b7280;">Concluído</span>'}
         </td></tr>`;
     }).join('') : '<tr><td colspan="10" style="text-align:center; padding:16px;">Nenhuma requisição encontrada.</td></tr>';
     showcase(reqs.find(r => r.id_requisicao === selecionada) || null);

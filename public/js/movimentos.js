@@ -4,27 +4,30 @@
   const GF = window.GF, $ = GF.$, esc = GF.esc;
   let produtos = [];
 
-  function tabela(tipo, corpo, resumo, de, ate) {
-    return async () => {
-      const q = [`tipo=${tipo}`, $(de).value && `from=${$(de).value}`, $(ate).value && `to=${$(ate).value}`].filter(Boolean).join('&');
+  // Lista paginada (50 por página); o resumo soma o filtro inteiro, calculado pelo servidor.
+  function tabela(tipo, corpo, resumo, de, ate, pager) {
+    const carregar = async (offset = 0) => {
+      const q = [`tipo=${tipo}`, $(de).value && `from=${$(de).value}`, $(ate).value && `to=${$(ate).value}`, `limit=${GF.POR_PAGINA}`, `offset=${offset}`].filter(Boolean).join('&');
       try {
-        const movs = (await GF.get(`/api/movements?${q}`)).movements;
-        const total = movs.reduce((a, m) => a + m.valor_total, 0);
-        $(resumo).textContent = `${movs.length} registro(s) • total ${GF.money(total)}`;
+        const r = await GF.get(`/api/movements?${q}`);
+        const movs = r.movements;
+        $(resumo).textContent = `${r.total.toLocaleString('pt-BR')} registro(s) • total ${GF.money(r.valorTotal)}`;
+        GF.pager($(pager), { total: r.total, offset, ir: carregar });
         $(corpo).innerHTML = movs.length ? movs.map(m => `<tr>
           <td>${GF.date(m.data_movimentacao)}</td><td>${esc(m.produto_nome)}</td><td>${esc(m.codigo_barras)}</td>
           <td>${GF.qty(m.quantidade)} ${esc(m.unidade)}</td><td>${GF.num2(m.valor_unitario)}</td><td>${GF.num2(m.valor_total)}</td>
           <td>${esc(m.usuario_nome)}</td><td>${m.origem === 'perda' ? `<span class="badge-status-pill badge-warning">Perda: ${esc(m.motivo_perda)}</span> ` : ''}${esc(m.observacao)}</td></tr>`).join('') : '<tr><td colspan="8" class="empty-cell">Nenhuma movimentação encontrada.</td></tr>';
-      } catch (e) { $(corpo).innerHTML = '<tr><td colspan="8" class="empty-cell">Falha ao carregar as movimentações.</td></tr>'; }
+      } catch (e) { $(corpo).innerHTML = '<tr><td colspan="8" class="empty-cell">Falha ao carregar as movimentações.</td></tr>'; $(pager).innerHTML = ''; }
     };
+    return () => carregar(0);
   }
-  const carregarSaidas = tabela('Saída', '#saidas-tabela-corpo', '#saidas-resumo', '#saidas-de', '#saidas-ate');
-  const carregarEntradas = tabela('Entrada', '#entradas-tabela-corpo', '#entradas-resumo', '#entradas-de', '#entradas-ate');
+  const carregarSaidas = tabela('Saída', '#saidas-tabela-corpo', '#saidas-resumo', '#saidas-de', '#saidas-ate', '#saidas-pager');
+  const carregarEntradas = tabela('Entrada', '#entradas-tabela-corpo', '#entradas-resumo', '#entradas-de', '#entradas-ate', '#entradas-pager');
 
   // ---- modal com linhas (lote)
   function linhaHtml(sel) {
     return `<div class="mov-linha"><select class="mov-prod" aria-label="Produto">${produtos.map(p => `<option value="${p.id_produto}" data-un="${esc(p.unidade)}" data-est="${p.quantidade_estoque}"${p.id_produto === sel ? ' selected' : ''}>${esc(p.nome_produto)} (${GF.qty(p.quantidade_estoque)} ${esc(p.unidade)})</option>`).join('')}</select>
-      <input type="number" class="mov-qtd" min="1" step="1" value="1" aria-label="Quantidade"><button type="button" class="btn-icon btn-action-cancel mov-rem" title="Remover linha" aria-label="Remover linha">✕</button></div>`;
+      <input type="number" class="mov-qtd" min="1" step="1" value="1" aria-label="Quantidade"><button type="button" class="btn-icon btn-action-cancel mov-rem" title="Remover linha" aria-label="Remover linha">${GF.icon('x')}</button></div>`;
   }
   function ajustaLinha(div) {
     const opt = $('.mov-prod', div).selectedOptions[0];

@@ -19,7 +19,7 @@
     if (GF.state.categories.length) f('categoria').value = String(GF.state.categories[0].id_categoria);
     $('#prod-preview-img').src = GF.imgFor({ id_categoria: Number(f('categoria').value) });
     $('#prod-imagem-file').value = '';
-    $('#btn-salvar-produto').textContent = '✓ Confirmar';
+    $('#btn-salvar-produto').innerHTML = `${GF.icon('check', 'icon icon-sm')} Confirmar`;
     GF.limparErros($('#form-cadastro-produto'));
     $('#prod-descricao').dispatchEvent(new Event('input'));
     ajustarUnidade();
@@ -35,7 +35,7 @@
     f('peso').value = p.peso || ''; f('unidade').value = p.unidade; f('categoria').value = String(p.id_categoria);
     f('lote').value = p.lote || ''; f('validade').value = p.validade || ''; f('descricao').value = p.descricao || '';
     $('#prod-preview-img').src = GF.imgFor(p);
-    $('#btn-salvar-produto').textContent = '✓ Confirmar alterações';
+    $('#btn-salvar-produto').innerHTML = `${GF.icon('check', 'icon icon-sm')} Confirmar alterações`;
     $('#prod-descricao').dispatchEvent(new Event('input'));
     ajustarUnidade();
     GF.limparErros($('#form-cadastro-produto'));
@@ -90,9 +90,9 @@
         <td><strong>${GF.qty(p.quantidade_estoque)}</strong></td>
         <td>
           ${p.status === 'Ativo'
-            ? `<button class="btn btn-sm btn-secondary" data-act="editar" title="Alterar produto" aria-label="Alterar ${esc(p.nome_produto)}">✏️</button>
-               <button class="btn btn-sm btn-danger" data-act="inativar" title="Inativar produto" aria-label="Inativar ${esc(p.nome_produto)}">🗑️</button>`
-            : `<button class="btn btn-sm btn-secondary" data-act="reativar" title="Reativar produto" aria-label="Reativar ${esc(p.nome_produto)}">↺ Reativar</button>`}
+            ? `<button class="btn-icon btn-action-next" data-act="editar" title="Alterar produto" aria-label="Alterar ${esc(p.nome_produto)}">${GF.icon('edit')}</button>
+               <button class="btn-icon btn-action-trash" data-act="inativar" title="Inativar produto" aria-label="Inativar ${esc(p.nome_produto)}">${GF.icon('trash')}</button>`
+            : `<button class="btn btn-sm btn-secondary" data-act="reativar" title="Reativar produto" aria-label="Reativar ${esc(p.nome_produto)}">${GF.icon('undo', 'icon icon-sm')} Reativar</button>`}
         </td></tr>`).join('') : '<tr><td colspan="5" style="text-align:center; padding:16px;">Nenhum produto encontrado.</td></tr>';
   }
 

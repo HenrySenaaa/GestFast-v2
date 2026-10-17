@@ -24,6 +24,19 @@ const bool = v => !!Number(v);
 const idNum = v => (Number.isInteger(Number(v)) ? Number(v) : 0);
 // Texto para LIKE: escapa os curingas digitados pelo usuário.
 const like = t => `%${String(t).replace(/[\\%_]/g, '\\$&')}%`;
+// Trecho LIMIT/OFFSET de uma listagem paginada (vazio = sem paginação). Os números são validados aqui.
+const paginar = (limite, offset) => {
+  const l = Math.trunc(Number(limite));
+  if (!(l > 0)) return '';
+  const o = Math.max(0, Math.trunc(Number(offset)) || 0);
+  return ` LIMIT ${Math.min(l, 500)} OFFSET ${o}`;
+};
+// Monta a listagem `sql` (que começa com "... FROM tabela alias JOIN ...") filtrada e ordenada.
+// Com paginação, a página é cortada ANTES dos JOINs ("deferred join"): sem isso o MySQL junta a tabela
+// inteira com usuario/produto e só depois aplica o LIMIT (medido: ~1 s para 50 linhas em 200 mil).
+const listagem = (sql, tabela, filtro, ordem, pag) => (pag
+  ? sql.replace(`FROM ${tabela}`, `FROM (SELECT * FROM ${tabela}${filtro} ORDER BY ${ordem}${pag}) ${tabela.split(' ')[1]}`) + ` ORDER BY ${ordem}`
+  : `${sql}${filtro} ORDER BY ${ordem}`);
 
 // Unidades que aceitam fração (peso/volume). As demais só aceitam quantidades inteiras.
 const aceitaFracao = un => ['kg', 'lt', 'l'].includes(String(un || '').toLowerCase());
@@ -108,6 +121,13 @@ class Database {
   }
 
   end() { return pool.end(); }
+
+  // O GestFast v2 precisa da migracao-otimizacao.sql (coluna numero_pedido e índices).
+  async verificarEsquema() {
+    const [rows] = await pool.query(
+      "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'requisicao' AND column_name = 'numero_pedido'");
+    if (!rows.length) throw erro('O banco ainda não tem as otimizações do GestFast v2. Rode database/migracao-otimizacao.sql no MySQL Workbench.', 500);
+  }
 
   // Transação: roda fn(conn); no fim atualiza os alertas de estoque; erro = rollback de tudo.
   tx(fn) {
@@ -516,24 +536,42 @@ class Database {
   }
 
   // ---------------------------------------------------------------- dashboard (RF 10)
+  // As consultas são independentes e rodam em paralelo (cada uma pega uma conexão do pool).
+  // Somas e contagens são feitas pelo MySQL; datas filtradas por intervalo para usar os índices.
   async getDashboardData(usuario) {
     const hoje = dataISO();
-    const [ativos] = await pool.query("SELECT id_categoria, quantidade_estoque FROM produto WHERE status = 'Ativo'");
-    const alertas = await this.getAlertasCriticos();
-    const validades = await this.getValidades();
-    const [[vh]] = await pool.query(
-      "SELECT COUNT(*) AS n, COALESCE(SUM(valor_total), 0) AS total FROM venda WHERE status_venda = 'Concluída' AND DATE(data_venda) = ?", [hoje]);
-    const [[ra]] = await pool.query('SELECT COUNT(*) AS n FROM requisicao WHERE situacao IN (?)', [SITUACOES_ABERTAS]);
-    const categorias = await this.listCategorias();
-    const totalEmEstoque = ativos.reduce((a, p) => a + Number(p.quantidade_estoque), 0);
+    const amanha = dataISO(deslocar(1));
+    const semanaInicio = dataISO(deslocar(-6));
+    const [[[est]], [porCategoria], alertas, validades, [[vh]], [[ra]], [semana], ultimasCompras] = await Promise.all([
+      pool.query("SELECT COUNT(*) AS n, COALESCE(SUM(quantidade_estoque), 0) AS total FROM produto WHERE status = 'Ativo'"),
+      pool.query(
+        `SELECT c.nome_categoria AS categoria, SUM(p.quantidade_estoque) AS total
+         FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria
+         WHERE p.status = 'Ativo' GROUP BY c.id_categoria, c.nome_categoria HAVING total > 0 ORDER BY c.id_categoria`),
+      this.getAlertasCriticos(),
+      this.getValidades(),
+      pool.query(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(valor_total), 0) AS total FROM venda
+         WHERE status_venda = 'Concluída' AND data_venda >= ? AND data_venda < ?`, [hoje, amanha]),
+      pool.query('SELECT COUNT(*) AS n FROM requisicao WHERE situacao IN (?)', [SITUACOES_ABERTAS]),
+      pool.query(
+        `SELECT DATE_FORMAT(data_venda, '%Y-%m-%d') AS dia, COUNT(*) AS vendas, SUM(valor_total) AS total FROM venda
+         WHERE status_venda = 'Concluída' AND data_venda >= ? AND data_venda < ? GROUP BY dia ORDER BY dia`, [semanaInicio, amanha]),
+      this.listRequisicoes({ limite: 6 })
+    ]);
+    const totalEmEstoque = Number(est.total);
     const faturamentoHoje = Number(vh.total), vendasHoje = Number(vh.n);
-    const categoriasMap = {};
-    categorias.forEach(c => { categoriasMap[c.id_categoria] = { nome: c.nome_categoria, total: 0 }; });
-    ativos.forEach(p => { if (categoriasMap[p.id_categoria]) categoriasMap[p.id_categoria].total += Number(p.quantidade_estoque); });
+    // Últimos 7 dias, inclusive os dias sem venda (gráfico do painel).
+    const porDia = new Map(semana.map(d => [d.dia, d]));
+    const vendasSemana = Array.from({ length: 7 }, (_, i) => {
+      const dia = dataISO(deslocar(i - 6));
+      const d = porDia.get(dia);
+      return { dia, vendas: d ? Number(d.vendas) : 0, total: d ? r2(d.total) : 0 };
+    });
     return {
       usuarioAtivo: usuario && usuario.perfil !== undefined ? usuario : this.publicUser(usuario),
       metricas: {
-        totalProdutos: ativos.length,
+        totalProdutos: Number(est.n),
         alertasCriticosCount: alertas.length,
         totalItensEstoque: r3(totalEmEstoque),
         requisicoesAbertasCount: Number(ra.n),
@@ -545,10 +583,11 @@ class Database {
       },
       alertas,
       validades,
-      ultimasCompras: await this.listRequisicoes({ limite: 6 }),
-      distribuicaoEstoque: Object.values(categoriasMap).filter(i => i.total > 0).map(i => ({
-        categoria: i.nome, quantidade: r3(i.total),
-        porcentagem: totalEmEstoque > 0 ? ((i.total / totalEmEstoque) * 100).toFixed(1) : '0'
+      ultimasCompras,
+      vendasSemana,
+      distribuicaoEstoque: porCategoria.map(i => ({
+        categoria: i.categoria, quantidade: r3(i.total),
+        porcentagem: totalEmEstoque > 0 ? ((Number(i.total) / totalEmEstoque) * 100).toFixed(1) : '0'
       }))
     };
   }
@@ -560,19 +599,23 @@ class Database {
       `SELECT h.id_requisicao, h.data_registro, h.situacao, u.nome AS usuario
        FROM requisicao_historico h LEFT JOIN usuario u ON u.id_usuario = h.id_usuario
        WHERE h.id_requisicao IN (?) ORDER BY h.id_historico`, [rows.map(r => r.id_requisicao)]);
+    const porReq = new Map(rows.map(r => [r.id_requisicao, []]));
+    hist.forEach(h => porReq.get(h.id_requisicao).push({ data: hm(h.data_registro), situacao: h.situacao, usuario: h.usuario || '-' }));
     return rows.map(r => {
-      const { id_fornecedor, ...resto } = r;
-      return {
-        ...resto, observacao: r.observacao || '',
-        historico: hist.filter(h => h.id_requisicao === r.id_requisicao)
-          .map(h => ({ data: hm(h.data_registro), situacao: h.situacao, usuario: h.usuario || '-' }))
-      };
+      const { id_fornecedor, numero_pedido, ...resto } = r;
+      return { ...resto, observacao: r.observacao || '', historico: porReq.get(r.id_requisicao) };
     });
   }
 
-  async listRequisicoes({ limite } = {}) {
-    const [rows] = await pool.query(`${SQL_REQ} ORDER BY r.id_requisicao DESC${limite ? ' LIMIT ?' : ''}`, limite ? [limite] : []);
+  // Sem `limite` devolve tudo (como antes); com `limite`/`offset` devolve só a página pedida.
+  async listRequisicoes({ limite, offset } = {}) {
+    const [rows] = await pool.query(`${SQL_REQ} ORDER BY r.id_requisicao DESC${paginar(limite, offset)}`);
     return this.montarRequisicoes(rows);
+  }
+
+  async contarRequisicoes() {
+    const [[r]] = await pool.query('SELECT COUNT(*) AS n FROM requisicao');
+    return { total: Number(r.n) };
   }
 
   async getRequisicao(id, c = pool, lock = false) {
@@ -604,7 +647,8 @@ class Database {
       const obs = validarTexto(data.observacao, 'A observação da requisição', { min: 10, max: 5000 });
       gateways.comunicarFornecedor('PEDIDO', data, await this.getSettings(c));
       // Código = maior número existente + 1 (não depende do id, que pode pular).
-      const [[mx]] = await c.query("SELECT COALESCE(MAX(CAST(SUBSTRING(codigo_pedido, 5) AS UNSIGNED)), 9660) AS n FROM requisicao FOR UPDATE");
+      // numero_pedido é calculado e indexado pelo banco: o MAX sai do índice e trava só o fim dele.
+      const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao FOR UPDATE');
       const [r] = await c.query(
         `INSERT INTO requisicao (codigo_pedido, id_fornecedor, id_produto, produto_nome, quantidade_pedida, quantidade_atendida, unidade,
            valor_unitario, valor_total, situacao, data_pedido, previsao_entrega, endereco_entrega, observacao)
@@ -731,13 +775,29 @@ class Database {
     return movs;
   }
 
-  async getMovimentacoes({ tipo, from, to } = {}) {
+  filtroMovimentacoes({ tipo, from, to }) {
     const where = [], params = [];
     if (tipo) { where.push('m.tipo_movimentacao = ?'); params.push(tipo); }
     if (from) { where.push('m.data_movimentacao >= ?'); params.push(`${from} 00:00:00`); }
     if (to) { where.push('m.data_movimentacao <= ?'); params.push(`${to} 23:59:59`); }
-    const [rows] = await pool.query(`${SQL_MOV}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY m.id_movimentacao DESC`, params);
+    return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', params };
+  }
+
+  // Sem `limite` devolve tudo (como antes); com `limite`/`offset` devolve só a página pedida.
+  async getMovimentacoes({ tipo, from, to, limite, offset } = {}) {
+    const f = this.filtroMovimentacoes({ tipo, from, to });
+    const [rows] = await pool.query(listagem(SQL_MOV, 'movimentacao_estoque m', f.sql, 'm.id_movimentacao DESC', paginar(limite, offset)), f.params);
     return rows.map(mapMov);
+  }
+
+  // Total de registros e valor somado de TODO o filtro (não só da página), para o resumo da tela.
+  async contarMovimentacoes(filtros = {}) {
+    const f = this.filtroMovimentacoes(filtros);
+    // Sem período, somar o histórico inteiro lendo a tabela em sequência é ~3x mais rápido que pelo índice
+    // de tipo (que buscaria linha a linha). Com período, o índice vence. Medido no teste de carga.
+    const dica = filtros.from || filtros.to ? '' : ' IGNORE INDEX (idx_mov_tipo_data)';
+    const [[r]] = await pool.query(`SELECT COUNT(*) AS n, COALESCE(SUM(m.quantidade * m.valor_unitario), 0) AS valor FROM movimentacao_estoque m${dica}${f.sql}`, f.params);
+    return { total: Number(r.n), valorTotal: r2(r.valor) };
   }
 
   // ---------------------------------------------------------------- vendas (RF 07, 08, 09)
@@ -773,22 +833,37 @@ class Database {
     return mapVenda(rows[0], itens.get(rows[0].id_venda));
   }
 
-  async getVendas({ from, to, q, status, limite } = {}) {
+  // O filtro usa só colunas de `venda`: vendedor e produto viram subconsultas não correlacionadas
+  // (calculadas uma vez), e o MySQL percorre a chave primária em ordem decrescente parando no LIMIT.
+  filtroVendas({ from, to, q, status }) {
     const where = [], params = [];
     if (from) { where.push('v.data_venda >= ?'); params.push(`${from} 00:00:00`); }
     if (to) { where.push('v.data_venda <= ?'); params.push(`${to} 23:59:59`); }
     if (status) { where.push('v.status_venda = ?'); params.push(status); }
     if (txt(q)) {
       const t = like(txt(q));
-      where.push(`(v.codigo_venda LIKE ? OR u.nome LIKE ? OR v.forma_pagamento LIKE ? OR EXISTS (
-        SELECT 1 FROM item_venda i JOIN produto p ON p.id_produto = i.id_produto WHERE i.id_venda = v.id_venda AND p.nome_produto LIKE ?))`);
+      where.push(`(v.codigo_venda LIKE ? OR v.forma_pagamento LIKE ?
+        OR v.id_usuario IN (SELECT id_usuario FROM usuario WHERE nome LIKE ?)
+        OR v.id_venda IN (SELECT i.id_venda FROM item_venda i JOIN produto p ON p.id_produto = i.id_produto WHERE p.nome_produto LIKE ?))`);
       params.push(t, t, t, t);
     }
-    const [rows] = await pool.query(
-      `${SQL_VENDA}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY v.id_venda DESC${limite ? ' LIMIT ?' : ''}`,
-      limite ? [...params, limite] : params);
+    return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', params };
+  }
+
+  // Sem `limite` devolve tudo (como antes); com `limite`/`offset` devolve só a página pedida.
+  async getVendas({ from, to, q, status, limite, offset } = {}) {
+    const f = this.filtroVendas({ from, to, q, status });
+    const [rows] = await pool.query(listagem(SQL_VENDA, 'venda v', f.sql, 'v.id_venda DESC', paginar(limite, offset)), f.params);
     const itens = await this.itensDasVendas(rows.map(v => v.id_venda));
     return rows.map(v => mapVenda(v, itens.get(v.id_venda)));
+  }
+
+  // Total de vendas e faturamento (só as concluídas) de TODO o filtro, para o resumo da tela.
+  async contarVendas(filtros = {}) {
+    const f = this.filtroVendas(filtros);
+    const [[r]] = await pool.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(IF(v.status_venda = 'Concluída', v.valor_total, 0)), 0) AS fat FROM venda v${f.sql}`, f.params);
+    return { total: Number(r.n), faturamento: r2(r.fat) };
   }
 
   async gravarItensVenda(c, idVenda, itens) {
@@ -1029,35 +1104,56 @@ class Database {
   async getRelatorioVendas({ from, to, categoria } = {}) {
     this.validarPeriodo({ from, to });
     const cat = categoria ? Number(categoria) : null;
-    const vendas = await this.getVendas({ from, to, status: 'Concluída' });
-    const [prods] = await pool.query('SELECT p.id_produto, p.id_categoria, c.nome_categoria FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria');
+    const where = ["v.status_venda = 'Concluída'"], params = [];
+    if (from) { where.push('v.data_venda >= ?'); params.push(`${from} 00:00:00`); }
+    if (to) { where.push('v.data_venda <= ?'); params.push(`${to} 23:59:59`); }
+    const filtro = where.join(' AND ');
+    // Três leituras enxutas em paralelo (cabeçalhos, itens só com números e catálogo); o resto é somado
+    // aqui com Map. Medido no teste de carga: é mais rápido que agrupar com GROUP_CONCAT no MySQL.
+    const [[vendas], [itens], [prods]] = await Promise.all([
+      pool.query(
+        `SELECT v.id_venda, v.codigo_venda, v.data_venda, v.forma_pagamento, v.valor_subtotal, v.valor_total, u.nome AS usuario_nome
+         FROM venda v JOIN usuario u ON u.id_usuario = v.id_usuario WHERE ${filtro} ORDER BY v.id_venda DESC`, params),
+      pool.query(
+        `SELECT i.id_item_venda, i.id_venda, i.id_produto, i.quantidade, i.subtotal
+         FROM venda v JOIN item_venda i ON i.id_venda = v.id_venda WHERE ${filtro}`, params),
+      pool.query('SELECT p.id_produto, p.nome_produto, p.unidade, p.id_categoria, c.nome_categoria FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria')
+    ]);
     const catDe = new Map(prods.map(p => [p.id_produto, p]));
+    const itensDe = new Map();
+    for (const i of itens) {
+      const p = catDe.get(i.id_produto);
+      if (cat && (!p || p.id_categoria !== cat)) continue;
+      const l = itensDe.get(i.id_venda);
+      if (l) l.push(i); else itensDe.set(i.id_venda, [i]);
+    }
     const mapa = new Map();
     const pagamentos = new Map();
     const transacoes = [];
     let bruto = 0, liquido = 0, descontos = 0;
     for (const v of vendas) {
+      const doVenda = itensDe.get(v.id_venda);
+      if (!doVenda) continue;
+      doVenda.sort((a, b) => a.id_item_venda - b.id_item_venda);
+      // Desconto rateado na mesma proporção do total da venda.
       const razao = v.valor_subtotal > 0 ? v.valor_total / v.valor_subtotal : 1;
       let sub = 0;
       const resumo = [];
-      for (const i of v.itens) {
+      for (const i of doVenda) {
         const p = catDe.get(i.id_produto);
-        if (cat && (!p || p.id_categoria !== cat)) continue;
         sub += i.subtotal;
-        resumo.push(`${i.nome_produto} x${i.quantidade}`);
-        const nomeCat = p ? p.nome_categoria : '-';
-        const m = mapa.get(i.id_produto) || { id_produto: i.id_produto, nome_produto: i.nome_produto, categoria: nomeCat, unidade: i.unidade, quantidade: 0, total: 0 };
+        resumo.push(`${p.nome_produto} x${i.quantidade}`);
+        const m = mapa.get(i.id_produto) || { id_produto: i.id_produto, nome_produto: p.nome_produto, categoria: p.nome_categoria, unidade: p.unidade, quantidade: 0, total: 0 };
         m.quantidade = r3(m.quantidade + i.quantidade);
         m.total = r2(m.total + i.subtotal);
         mapa.set(i.id_produto, m);
       }
-      if (!resumo.length) continue;
       const liq = r2(sub * razao);
       bruto = r2(bruto + sub); liquido = r2(liquido + liq); descontos = r2(descontos + (sub - liq));
       const pg = pagamentos.get(v.forma_pagamento) || { forma: v.forma_pagamento, total: 0, quantidade: 0 };
       pg.total = r2(pg.total + liq); pg.quantidade++;
       pagamentos.set(v.forma_pagamento, pg);
-      transacoes.push({ id_venda: v.id_venda, codigo_venda: v.codigo_venda, data_venda: v.data_venda, usuario_nome: v.usuario_nome, forma_pagamento: v.forma_pagamento, itens_resumo: resumo.join(', '), bruto: r2(sub), desconto: r2(sub - liq), valor_total: liq });
+      transacoes.push({ id_venda: v.id_venda, codigo_venda: v.codigo_venda, data_venda: hm(v.data_venda), usuario_nome: v.usuario_nome, forma_pagamento: v.forma_pagamento, itens_resumo: resumo.join(', '), bruto: r2(sub), desconto: r2(sub - liq), valor_total: liq });
     }
     const itensVendidos = [...mapa.values()].map(i => ({ ...i, valor_unitario: i.quantidade ? r2(i.total / i.quantidade) : 0 })).sort((a, b) => b.total - a.total);
     return {
@@ -1074,16 +1170,21 @@ class Database {
     const where = [], params = [];
     if (from) { where.push('data_movimentacao >= ?'); params.push(`${from} 00:00:00`); }
     if (to) { where.push('data_movimentacao <= ?'); params.push(`${to} 23:59:59`); }
-    const [movs] = await pool.query(
-      `SELECT id_produto, tipo_movimentacao, SUM(quantidade) AS total FROM movimentacao_estoque
-       ${where.length ? `WHERE ${where.join(' AND ')}` : ''} GROUP BY id_produto, tipo_movimentacao`, params);
-    const soma = (idp, tipo) => r3((movs.find(m => m.id_produto === idp && m.tipo_movimentacao === tipo) || { total: 0 }).total);
+    if (cat) params.push(cat);
+    // Entradas e saídas somadas pelo MySQL numa única passada e ligadas ao produto por LEFT JOIN.
+    // IGNORE INDEX: esse índice não cobre a consulta; com ele o MySQL faz uma busca por linha (medido 2x mais lento).
     const [prods] = await pool.query(
-      `SELECT p.*, c.nome_categoria FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria
-       WHERE p.status = 'Ativo'${cat ? ' AND p.id_categoria = ?' : ''} ORDER BY p.id_produto`, cat ? [cat] : []);
+      `SELECT p.*, c.nome_categoria, COALESCE(m.entradas, 0) AS entradas, COALESCE(m.saidas, 0) AS saidas
+       FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria
+       LEFT JOIN (
+         SELECT id_produto, SUM(IF(tipo_movimentacao = 'Entrada', quantidade, 0)) AS entradas,
+                SUM(IF(tipo_movimentacao = 'Saída', quantidade, 0)) AS saidas
+         FROM movimentacao_estoque IGNORE INDEX (idx_mov_produto_data) ${where.length ? `WHERE ${where.join(' AND ')}` : ''} GROUP BY id_produto
+       ) m ON m.id_produto = p.id_produto
+       WHERE p.status = 'Ativo'${cat ? ' AND p.id_categoria = ?' : ''} ORDER BY p.id_produto`, params);
     const linhas = prods.map(p => ({
       id_produto: p.id_produto, codigo_barras: p.codigo_barras, nome_produto: p.nome_produto, unidade: p.unidade,
-      categoria: p.nome_categoria, entradas: soma(p.id_produto, 'Entrada'), saidas: soma(p.id_produto, 'Saída'),
+      categoria: p.nome_categoria, entradas: r3(p.entradas), saidas: r3(p.saidas),
       saldo_atual: p.quantidade_estoque, estoque_minimo: p.estoque_minimo,
       valor_em_estoque: r2(p.quantidade_estoque * p.preco_custo),
       situacao: p.quantidade_estoque <= p.estoque_minimo ? 'Crítico' : 'Regular'
