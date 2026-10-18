@@ -186,7 +186,7 @@ function salvarImagem(dataUrl, idRef) {
   return `uploads/${nome}`;
 }
 
-route('GET', '/api/products', { perm: 'produtos:ver' }, async ctx => ok({ products: await db.getProducts(ctx.query.q, ctx.query.category, ctx.query.status || 'Ativo') }));
+route('GET', '/api/products', { perm: 'produtos:ver' }, async ctx => ok({ products: await db.getProducts(ctx.query.q, ctx.query.category, ctx.query.status || 'Ativo', ctx.query.tipo) }));
 route('GET', '/api/products/:id', { perm: 'produtos:ver' }, async ctx => {
   const p = await db.getProductById(ctx.params.id);
   if (!p) throw new HttpError(404, 'Produto não encontrado');
@@ -252,6 +252,40 @@ route('POST', '/api/losses', { perm: 'movimentos:registrar' }, async ctx => {
   const movs = await db.registrarPerdas(ctx.body, ctx.user);
   logger.log('INFO', 'perda_registrada', { motivo: ctx.body.motivo_perda, itens: movs.length }, ctx.user.email);
   return ok({ movements: movs, message: movs.length > 1 ? `Perda registrada (${movs.length} itens) e estoque atualizado!` : 'Perda registrada e estoque atualizado!' }, 201);
+});
+
+// ---------------- produção: fichas técnicas e registro de produção (etapa 3)
+route('GET', '/api/recipes', { perm: 'producao:ver' }, async () => ok({ fichas: await db.listFichas() }));
+route('GET', '/api/recipes/:id', { perm: 'producao:ver' }, async ctx => {
+  const f = await db.getFicha(ctx.params.id);
+  if (!f) throw new HttpError(404, 'Este produto ainda não tem ficha técnica.');
+  return ok({ ficha: f });
+});
+route('PUT', '/api/recipes/:id', { perm: 'fichas:editar' }, async ctx => ok({ ficha: await db.saveFicha(ctx.params.id, ctx.body, ctx.user), message: 'Ficha técnica salva! O custo do produto foi atualizado.' }));
+route('DELETE', '/api/recipes/:id', { perm: 'fichas:editar' }, async ctx => {
+  await db.deleteFicha(ctx.params.id);
+  return ok({ message: 'Ficha técnica excluída.' });
+});
+
+route('GET', '/api/production', { perm: 'producao:ver' }, async ctx => {
+  const f = { from: ctx.query.from, to: ctx.query.to, status: ctx.query.status };
+  return comTotal(ctx, 'producoes', await db.getProducoes({ ...f, ...pagina(ctx) }), () => db.contarProducoes(f));
+});
+route('GET', '/api/production/preview', { perm: 'producao:ver' }, async ctx => ok({ preview: await db.previewProducao(ctx.query) }));
+route('GET', '/api/production/:id', { perm: 'producao:ver' }, async ctx => {
+  const p = await db.getProducao(ctx.params.id);
+  if (!p) throw new HttpError(404, 'Produção não encontrada');
+  return ok({ producao: p });
+});
+route('POST', '/api/production', { perm: 'producao:registrar' }, async ctx => {
+  const p = await db.registrarProducao(ctx.body, ctx.user);
+  logger.log('INFO', 'producao_registrada', { id: p.id_producao, produto: p.nome_produto, quantidade: p.quantidade }, ctx.user.email);
+  return ok({ producao: p, message: `Produção registrada: +${num(p.quantidade)} ${p.unidade} de ${p.nome_produto}, insumos baixados do estoque.` }, 201);
+});
+route('POST', '/api/production/:id/cancel', { perm: 'producao:estornar' }, async ctx => {
+  const p = await db.estornarProducao(ctx.params.id, ctx.body, ctx.user);
+  logger.log('WARN', 'producao_estornada', { id: p.id_producao, motivo: p.motivo_estorno }, ctx.user.email);
+  return ok({ producao: p, message: 'Produção estornada: insumos devolvidos e produto retirado do estoque.' });
 });
 
 // ---------------- vendas
@@ -375,6 +409,30 @@ route('GET', '/api/reports/losses', { perm: 'relatorios:ver' }, async ctx => {
           rows: [...d.porProduto.map(p => [p.nome_produto, p.categoria, p.unidade, num(p.quantidade), brl(p.valor_total)]), Object.assign(['TOTAL', '', '', '', brl(d.valorTotal)], { __bold: true })] },
         { heading: 'Registros', columns: [{ label: 'Data', w: 2.4 }, { label: 'Produto', w: 4 }, { label: 'Motivo', w: 2.2 }, { label: 'Quant.', w: 1.4, align: 'right' }, { label: 'Valor', w: 1.8, align: 'right' }, { label: 'Responsável', w: 2.4 }],
           rows: d.registros.map(r => [r.data_movimentacao, r.produto_nome, r.motivo_perda, `${num(r.quantidade)} ${r.unidade}`, brl(r.valor_total), r.usuario_nome]) }
+      ]
+    };
+  });
+});
+
+route('GET', '/api/reports/consumption', { perm: 'relatorios:ver' }, async ctx => {
+  const r = await db.getRelatorioConsumo({ from: ctx.query.from, to: ctx.query.to, categoria: ctx.query.categoria });
+  return entregarRelatorio(ctx, 'consumo', r, (d, cats) => {
+    const sub = [descPeriodo(d.filtros, cats), `Produções: ${d.totalProducoes}  |  Custo dos insumos: ${brl(d.custoTotal)}`];
+    return {
+      titulo: 'Relatório de Consumo da Produção', subtitulo: sub, landscape: true,
+      sheets: [
+        { name: 'Por produto', title: 'Produção por produto', subtitle: sub[0],
+          columns: [{ label: 'Produto', width: 34 }, { label: 'Categoria', width: 22 }, { label: 'Unid', width: 8 }, { label: 'Produções', width: 11 }, { label: 'Receitas', width: 11, fmt: 'dec' }, { label: 'Quant. produzida', width: 16, fmt: 'dec' }, { label: 'Custo total', width: 14, fmt: 'money' }, { label: 'Custo unitário', width: 14, fmt: 'money' }],
+          rows: d.porProduto.map(p => [p.nome_produto, p.categoria, p.unidade, p.producoes, p.receitas, p.quantidade, p.custo_total, p.custo_unitario]) },
+        { name: 'Por insumo', title: 'Consumo de insumos', subtitle: sub[1],
+          columns: [{ label: 'Insumo', width: 36 }, { label: 'Unid', width: 8 }, { label: 'Quant. consumida', width: 16, fmt: 'dec' }, { label: 'Custo', width: 14, fmt: 'money' }],
+          rows: [...d.porInsumo.map(i => [i.nome_produto, i.unidade, i.quantidade, i.custo_total]), Object.assign(['TOTAL', '', '', d.custoTotal], { __bold: true })] }
+      ],
+      sections: [
+        { heading: 'Produção por produto', columns: [{ label: 'Produto', w: 4.5 }, { label: 'Unid', w: 1 }, { label: 'Produções', w: 1.5, align: 'right' }, { label: 'Quant.', w: 1.6, align: 'right' }, { label: 'Custo total', w: 2, align: 'right' }, { label: 'Custo unit.', w: 2, align: 'right' }],
+          rows: d.porProduto.map(p => [p.nome_produto, p.unidade, String(p.producoes), num(p.quantidade), brl(p.custo_total), brl(p.custo_unitario)]) },
+        { heading: 'Consumo de insumos', columns: [{ label: 'Insumo', w: 5 }, { label: 'Unid', w: 1 }, { label: 'Quant. consumida', w: 2.2, align: 'right' }, { label: 'Custo', w: 2, align: 'right' }],
+          rows: [...d.porInsumo.map(i => [i.nome_produto, i.unidade, num(i.quantidade), brl(i.custo_total)]), Object.assign(['TOTAL', '', '', brl(d.custoTotal)], { __bold: true })] }
       ]
     };
   });

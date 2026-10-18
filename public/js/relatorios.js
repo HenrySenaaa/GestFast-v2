@@ -1,9 +1,9 @@
-// relatorios.js - Relatórios de vendas, estoque e desperdício com filtros e exportação PDF/Excel (RF 12, 13, 14)
+// relatorios.js - Relatórios de vendas, estoque, desperdício e consumo da produção com filtros e exportação PDF/Excel (RF 12, 13, 14)
 (function () {
   'use strict';
   const GF = window.GF, $ = GF.$, esc = GF.esc;
   let tipo = 'vendas', categoria = '', ultimo = null;
-  const ROTA = { vendas: 'sales', estoque: 'stock', perdas: 'losses' };
+  const ROTA = { vendas: 'sales', estoque: 'stock', perdas: 'losses', consumo: 'consumption' };
 
   function periodoTexto() {
     const de = $('#rel-de').value, ate = $('#rel-ate').value;
@@ -60,6 +60,22 @@
     $('#rel-footer').classList.remove('is-hidden');
   }
 
+  // Consumo da produção: produtos feitos (custo real) e insumos gastos no período.
+  function renderConsumo(r) {
+    $('#rel-titulo').textContent = `Consumo da produção ${periodoTexto()}${categoria ? ' • ' + GF.categoryName(categoria) : ''}`;
+    $('#rel-thead').innerHTML = '<tr><th>Produto / insumo</th><th>Produções</th><th>Quantidade</th><th>Custo unit.</th><th>Custo total</th></tr>';
+    const linhasProd = r.porProduto.map(p => `<tr><td><strong>${esc(p.nome_produto)}</strong></td><td>${p.producoes}</td><td class="text-ok-strong">+${GF.qty(p.quantidade)} ${esc(p.unidade)}</td><td>${GF.num2(p.custo_unitario)}</td><td><strong>${GF.num2(p.custo_total)}</strong></td></tr>`).join('');
+    const linhasIns = r.porInsumo.map(i => `<tr><td>${esc(i.nome_produto)}</td><td></td><td class="text-danger-strong">-${GF.qty(i.quantidade)} ${esc(i.unidade)}</td><td></td><td>${GF.num2(i.custo_total)}</td></tr>`).join('');
+    $('#relatorio-vendas-tabela').innerHTML = r.porProduto.length
+      ? `<tr class="rel-subhead"><td colspan="5">Produzido</td></tr>${linhasProd}<tr class="rel-subhead"><td colspan="5">Insumos consumidos</td></tr>${linhasIns}`
+      : '<tr><td colspan="5" class="empty-cell">Nenhuma produção registrada no período ou categoria informada.</td></tr>';
+    $('#rel-kpis').textContent = r.totalProducoes ? `${r.totalProducoes} produção(ões) • custo dos insumos ${GF.money(r.custoTotal)}` : '';
+    $('#rel-kpis').title = '';
+    $('#rel-pagamentos').innerHTML = '';
+    $('#rel-total-faturamento').textContent = GF.num2(r.custoTotal);
+    $('#rel-footer').classList.remove('is-hidden');
+  }
+
   function validarPeriodo() {
     const de = $('#rel-de').value, ate = $('#rel-ate').value;
     if (de && ate && de > ate) { GF.marcarErro($('#rel-de')); GF.toast('A data inicial não pode ser posterior à data final.', 'error'); return false; }
@@ -72,13 +88,13 @@
     try {
       const r = (await GF.get(`/api/reports/${ROTA[tipo]}?${query()}`)).report;
       ultimo = r;
-      ({ vendas: renderVendas, estoque: renderEstoque, perdas: renderPerdas })[tipo](r);
+      ({ vendas: renderVendas, estoque: renderEstoque, perdas: renderPerdas, consumo: renderConsumo })[tipo](r);
     } catch (e) { ultimo = null; } finally { $('#btn-gerar-relatorio').disabled = false; }
   }
 
   async function exportar(fmt) {
     if (!validarPeriodo()) return;
-    const vazio = ultimo && !({ vendas: ultimo.itensVendidos, estoque: ultimo.linhas, perdas: ultimo.porProduto })[tipo].length;
+    const vazio = ultimo && !({ vendas: ultimo.itensVendidos, estoque: ultimo.linhas, perdas: ultimo.porProduto, consumo: ultimo.porProduto })[tipo].length;
     if (!ultimo || vazio) { GF.toast('Não há dados para exportar. Gere um relatório com resultados primeiro.', 'error'); return; }
     const ok = await GF.download(`/api/reports/${ROTA[tipo]}?${query(fmt)}`, `gestfast-${tipo}.${fmt}`);
     if (ok) GF.toast(`Relatório exportado em ${fmt === 'pdf' ? 'PDF' : 'Excel'} com sucesso!`, 'success');

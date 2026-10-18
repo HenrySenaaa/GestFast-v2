@@ -3,19 +3,27 @@
   'use strict';
   const GF = window.GF, $ = GF.$, esc = GF.esc;
   let lista = [], imagemData = null, editando = null;
-  const campos = ['nome', 'codigo', 'preco-custo', 'preco-min', 'estoque-minimo', 'peso', 'unidade', 'preco-venda', 'preco-max', 'categoria', 'estoque-atual', 'lote', 'validade', 'descricao'];
+  const campos = ['nome', 'codigo', 'unidade-compra', 'fator-conversao', 'preco-custo', 'preco-min', 'estoque-minimo', 'peso', 'unidade', 'preco-venda', 'preco-max', 'categoria', 'estoque-atual', 'lote', 'validade', 'descricao'];
   const f = id => $(`#prod-${id}`);
 
   function ajustarUnidade() {
     const frac = GF.fractional(f('unidade').value);
     ['estoque-minimo', 'estoque-atual'].forEach(i => { f(i).step = frac ? '0.001' : '1'; });
+    $('label[for="prod-fator-conversao"]').textContent = `1 unidade de compra = (${f('unidade').value})`;
+  }
+
+  // Insumo não é vendido: os campos de preço de venda somem (o servidor grava venda = custo).
+  function ajustarTipo() {
+    const insumo = f('tipo').value === 'Insumo';
+    ['preco-venda', 'preco-min', 'preco-max'].forEach(i => { f(i).closest('.figma-input-group').classList.toggle('is-hidden', insumo); });
   }
 
   function limpar() {
     editando = null; imagemData = null;
     $('#prod-id').value = '';
     campos.forEach(c => { if (f(c).tagName !== 'SELECT') f(c).value = ''; });
-    f('unidade').value = 'UN';
+    f('unidade').value = 'UN'; f('tipo').value = 'Revenda';
+    ajustarTipo();
     if (GF.state.categories.length) f('categoria').value = String(GF.state.categories[0].id_categoria);
     $('#prod-preview-img').src = GF.imgFor({ id_categoria: Number(f('categoria').value) });
     $('#prod-imagem-file').value = '';
@@ -34,6 +42,9 @@
     f('estoque-minimo').value = p.estoque_minimo; f('estoque-atual').value = p.quantidade_estoque;
     f('peso').value = p.peso || ''; f('unidade').value = p.unidade; f('categoria').value = String(p.id_categoria);
     f('lote').value = p.lote || ''; f('validade').value = p.validade || ''; f('descricao').value = p.descricao || '';
+    f('tipo').value = p.tipo || 'Revenda'; f('unidade-compra').value = p.unidade_compra || '';
+    f('fator-conversao').value = p.unidade_compra ? p.fator_conversao : '';
+    ajustarTipo();
     $('#prod-preview-img').src = GF.imgFor(p);
     $('#btn-salvar-produto').innerHTML = `${GF.icon('check', 'icon icon-sm')} Confirmar alterações`;
     $('#prod-descricao').dispatchEvent(new Event('input'));
@@ -48,11 +59,14 @@
     const erros = [];
     const req = (el, msg) => { erros.push([el, msg]); };
     if (f('nome').value.trim().length < 2) req(f('nome'), 'Informe o nome do produto.');
-    const venda = Number(f('preco-venda').value);
-    if (!(venda > 0)) req(f('preco-venda'), 'O preço de venda deve ser maior que zero.');
-    const min = f('preco-min').value === '' ? venda * 0.8 : Number(f('preco-min').value);
-    const max = f('preco-max').value === '' ? venda * 1.3 : Number(f('preco-max').value);
-    if (venda > 0 && (min > venda || venda > max)) req(f('preco-venda'), 'O preço de venda deve estar entre o preço mínimo e o máximo.');
+    if (f('tipo').value !== 'Insumo') {
+      const venda = Number(f('preco-venda').value);
+      if (!(venda > 0)) req(f('preco-venda'), 'O preço de venda deve ser maior que zero.');
+      const min = f('preco-min').value === '' ? venda * 0.8 : Number(f('preco-min').value);
+      const max = f('preco-max').value === '' ? venda * 1.3 : Number(f('preco-max').value);
+      if (venda > 0 && (min > venda || venda > max)) req(f('preco-venda'), 'O preço de venda deve estar entre o preço mínimo e o máximo.');
+    }
+    if (f('unidade-compra').value.trim() && !(Number(f('fator-conversao').value) > 0)) req(f('fator-conversao'), 'Informe quantas unidades de estoque vêm em 1 unidade de compra.');
     if (f('estoque-minimo').value === '' || Number(f('estoque-minimo').value) < 0) req(f('estoque-minimo'), 'Informe o estoque mínimo (zero ou mais).');
     if (!GF.fractional(f('unidade').value)) {
       if (f('estoque-minimo').value !== '' && !Number.isInteger(Number(f('estoque-minimo').value))) req(f('estoque-minimo'), `Produtos em ${f('unidade').value} só aceitam estoque mínimo inteiro.`);
@@ -70,7 +84,8 @@
       nome_produto: f('nome').value.trim(), codigo_barras: f('codigo').value.trim(), descricao: f('descricao').value.trim(),
       unidade: f('unidade').value, peso: f('peso').value.trim(), preco_custo: f('preco-custo').value, preco_venda: f('preco-venda').value,
       preco_min: f('preco-min').value, preco_max: f('preco-max').value, estoque_minimo: f('estoque-minimo').value,
-      quantidade_estoque: f('estoque-atual').value, id_categoria: Number(f('categoria').value), lote: f('lote').value.trim(), validade: f('validade').value
+      quantidade_estoque: f('estoque-atual').value, id_categoria: Number(f('categoria').value), lote: f('lote').value.trim(), validade: f('validade').value,
+      tipo: f('tipo').value, unidade_compra: f('unidade-compra').value.trim(), fator_conversao: f('fator-conversao').value
     };
     if (imagemData) body.imagem_data = imagemData;
     try {
@@ -86,7 +101,7 @@
       <tr data-id="${p.id_produto}" class="row-select ${editando === p.id_produto ? 'row-selected' : ''} ${p.status === 'Inativo' ? 'row-inactive' : ''}">
         <td><code>${esc(p.codigo_barras)}</code></td>
         <td><strong>${esc(p.nome_produto)}</strong><br><small style="color:var(--text-muted);">${esc(p.unidade)} - ${esc(p.peso || '')}${p.status === 'Inativo' ? ' • Inativo' : ''}</small></td>
-        <td>R$ ${Number(p.preco_venda).toFixed(2)}</td>
+        <td>${p.tipo === 'Insumo' ? '<span class="badge-status-pill badge-neutral">Insumo</span>' : `R$ ${Number(p.preco_venda).toFixed(2)}${p.tipo === 'Produção' ? '<br><small class="muted">produção</small>' : ''}`}</td>
         <td><strong>${GF.qty(p.quantidade_estoque)}</strong></td>
         <td>
           ${p.status === 'Ativo'
@@ -98,7 +113,8 @@
 
   async function carregar() {
     const q = $('#catalogo-busca-input').value.trim(), cat = $('#catalogo-filtro-categoria').value, st = $('#catalogo-filtro-status').value;
-    try { lista = (await GF.get(`/api/products?q=${encodeURIComponent(q)}&category=${cat}&status=${st}`)).products; render(); }
+    const tipo = $('#catalogo-filtro-tipo').value;
+    try { lista = (await GF.get(`/api/products?q=${encodeURIComponent(q)}&category=${cat}&status=${st}&tipo=${encodeURIComponent(tipo)}`)).products; render(); }
     catch (e) { $('#catalogo-produtos-corpo').innerHTML = '<tr><td colspan="5" class="empty-cell">Falha ao carregar o catálogo.</td></tr>'; }
   }
 
@@ -127,6 +143,7 @@
     $('#btn-cancelar-edicao').addEventListener('click', limpar);
     $('#btn-novo-produto-limpar').addEventListener('click', limpar);
     f('unidade').addEventListener('change', ajustarUnidade);
+    f('tipo').addEventListener('change', ajustarTipo);
     f('categoria').addEventListener('change', () => { if (!imagemData && !editando) $('#prod-preview-img').src = GF.imgFor({ id_categoria: Number(f('categoria').value) }); });
     $('#btn-upload-img').addEventListener('click', () => $('#prod-imagem-file').click());
     $('#prod-imagem-file').addEventListener('change', e => {
@@ -140,6 +157,7 @@
     let t; $('#catalogo-busca-input').addEventListener('input', () => { clearTimeout(t); t = setTimeout(carregar, 250); });
     $('#catalogo-filtro-categoria').addEventListener('change', carregar);
     $('#catalogo-filtro-status').addEventListener('change', carregar);
+    $('#catalogo-filtro-tipo').addEventListener('change', carregar);
     $('#catalogo-produtos-corpo').addEventListener('click', async e => {
       const tr = e.target.closest('tr[data-id]'); if (!tr) return;
       const p = lista.find(x => x.id_produto === Number(tr.dataset.id));

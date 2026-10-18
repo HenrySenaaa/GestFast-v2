@@ -132,7 +132,7 @@
   }
 
   async function carregarProdutos() {
-    try { produtos = (await GF.get('/api/products')).products; popularProdutos(); } catch (e) { /* toast */ }
+    try { produtos = (await GF.get('/api/products')).products.filter(p => p.tipo !== 'Insumo'); popularProdutos(); } catch (e) { /* toast */ }
   }
 
   GF.views.vendas = {

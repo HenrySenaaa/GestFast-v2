@@ -8,7 +8,8 @@ Sistema de gestão de estoque e vendas para panificadoras (projeto USCS - ADS). 
    (atenção: o `schema.sql` apaga e recria o banco `gestfast`). Para recomeçar do zero, rode os dois de novo.
    **Banco que já existe** (usado pelo GestFast original): em vez disso, faça um backup e rode só
    `database/migracao-otimizacao.sql`. Ele não apaga dados, pode rodar mais de uma vez, e o GestFast original
-   continua funcionando no mesmo banco. Sem essa migração, a v2 avisa no terminal e não sobe.
+   continua funcionando no mesmo banco. Depois rode `database/migracao-etapa3.sql` (produção: tipo de produto,
+   ficha técnica e registro de produção). Sem essas migrações, a v2 avisa no terminal e não sobe.
 2. **Configurar a conexão**: copiar `.env.example` para `.env` e colocar a senha do seu MySQL.
    O `.env` não vai para o Git.
 3. **Instalar e rodar** (Node 18 ou superior):
@@ -16,7 +17,7 @@ Sistema de gestão de estoque e vendas para panificadoras (projeto USCS - ADS). 
 ```bash
 npm install
 npm start               # http://localhost:3000
-npm test                # 22 testes automatizados da API (cenários do Apêndice F + v2)
+npm test                # 26 testes automatizados da API (cenários do Apêndice F + v2 + etapa 3)
 node test/carga.js      # teste de carga do banco (cria gestfast_carga_test)
 ```
 
@@ -48,7 +49,10 @@ e `GESTFAST_LOG_DIR`.
 | Entradas / Saídas | individual ou **em lote**, com filtro por período |
 | Caixa (PDV) | busca por código de barras, desconto em R$ ou %, limite de desconto configurável, troco, baixa automática de estoque |
 | Histórico de vendas | consultar, editar quantidades, cancelar (exige senha de gerente, estorna estoque) e excluir (só Administrador) |
-| Relatórios | faturamento/vendas e estoque (entradas, saídas, saldo) com filtro de período e categoria; exportação real em **PDF** e **Excel (.xlsx)** |
+| Relatórios | faturamento/vendas, estoque (entradas, saídas, saldo), desperdício e **consumo da produção** (insumos gastos e custo do que foi produzido) com filtro de período e categoria; exportação real em **PDF** e **Excel (.xlsx)** |
+| Ficha técnica | receita de cada produto de produção própria (insumos, rendimento, validade do pronto); custo por unidade e margem calculados; o custo do produto passa a ser o da receita |
+| Produção | registrar fornadas: entra o produto pronto e saem os insumos numa transação; prévia do consumo e da falta antes de confirmar; estorno com motivo (Administrador/BackOffice) |
+| Tipo de produto | Revenda, Produção própria ou Insumo (insumo não aparece no caixa); unidade de compra com conversão (ex.: 1 Saco = 25 KG) para dar entrada em sacos |
 | Funcionários | cadastrar, alterar, trocar perfil, ativar/desativar, filtros |
 | Configuração | parâmetros, troca de senha, acessibilidade (texto A-/A+, alto contraste), logs de atividade |
 
@@ -57,6 +61,10 @@ e `GESTFAST_LOG_DIR`.
 - Produtos em **UN, Pacote, DZ e Fatia só aceitam quantidades inteiras**; apenas **KG e Lt** aceitam frações (validado no navegador e no servidor).
 - Toda operação que altera estoque é uma transação: se algo falhar, nada é gravado.
 - Falhas externas (operadora de cartão negando, fornecedor fora do ar) podem ser simuladas em Configuração para demonstração.
+
+- Na produção, insumo controlado em unidade inteira (UN, DZ, Pacote) é **arredondado para cima** (meia dúzia de ovos vira 1 DZ).
+  Para receitas com poucos ovos, cadastre os ovos em UN.
+- A baixa é de um nível só: um insumo que também tem ficha técnica é baixado do estoque dele, não da receita dele.
 
 ## Estrutura
 

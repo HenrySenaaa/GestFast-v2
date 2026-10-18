@@ -5,7 +5,7 @@
   document.addEventListener('DOMContentLoaded', async () => {
     GF.initShell();
     GF.initAuth();
-    GF.initDashboard(); GF.initEstoque(); GF.initRequisicoes(); GF.initProdutos(); GF.initMovimentos(); GF.initVendas(); GF.initRelatorios(); GF.initAdmin();
+    GF.initDashboard(); GF.initEstoque(); GF.initRequisicoes(); GF.initProdutos(); GF.initMovimentos(); GF.initVendas(); GF.initProducao(); GF.initRelatorios(); GF.initAdmin();
 
     // Link de redefinição de senha (#reset=token)
     if (location.hash.startsWith('#reset=')) {

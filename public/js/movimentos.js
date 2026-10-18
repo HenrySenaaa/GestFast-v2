@@ -26,12 +26,19 @@
 
   // ---- modal com linhas (lote)
   function linhaHtml(sel) {
-    return `<div class="mov-linha"><select class="mov-prod" aria-label="Produto">${produtos.map(p => `<option value="${p.id_produto}" data-un="${esc(p.unidade)}" data-est="${p.quantidade_estoque}"${p.id_produto === sel ? ' selected' : ''}>${esc(p.nome_produto)} (${GF.qty(p.quantidade_estoque)} ${esc(p.unidade)})</option>`).join('')}</select>
-      <input type="number" class="mov-qtd" min="1" step="1" value="1" aria-label="Quantidade"><button type="button" class="btn-icon btn-action-cancel mov-rem" title="Remover linha" aria-label="Remover linha">${GF.icon('x')}</button></div>`;
+    return `<div class="mov-linha"><select class="mov-prod" aria-label="Produto">${produtos.map(p => `<option value="${p.id_produto}" data-un="${esc(p.unidade)}" data-est="${p.quantidade_estoque}" data-uc="${esc(p.unidade_compra || '')}" data-fator="${p.fator_conversao || 1}"${p.id_produto === sel ? ' selected' : ''}>${esc(p.nome_produto)} (${GF.qty(p.quantidade_estoque)} ${esc(p.unidade)})</option>`).join('')}</select>
+      <input type="number" class="mov-qtd" min="1" step="1" value="1" aria-label="Quantidade"><button type="button" class="btn-icon btn-action-cancel mov-rem" title="Remover linha" aria-label="Remover linha">${GF.icon('x')}</button>
+      <label class="mov-uc is-hidden"><input type="checkbox" class="mov-uc-check"> <span></span></label></div>`;
   }
+  // Na entrada, produto com unidade de compra (ex.: Saco de 25 KG) pode ser informado em sacos.
   function ajustaLinha(div) {
     const opt = $('.mov-prod', div).selectedOptions[0];
-    GF.applyQtyAttrs($('.mov-qtd', div), opt.dataset.un);
+    const uc = $('.mov-uc', div), emCompra = $('.mov-uc-check', div);
+    const mostrar = $('#modal-mov-tipo').value === 'Entrada' && !!opt.dataset.uc;
+    uc.classList.toggle('is-hidden', !mostrar);
+    if (!mostrar) emCompra.checked = false;
+    $('span', uc).textContent = `Informar em ${opt.dataset.uc} (1 ${opt.dataset.uc} = ${GF.qty(opt.dataset.fator)} ${opt.dataset.un})`;
+    if (emCompra.checked) { const q = $('.mov-qtd', div); q.min = '0.001'; q.step = '0.001'; } else GF.applyQtyAttrs($('.mov-qtd', div), opt.dataset.un);
   }
   function addLinha(box = $('#mov-linhas'), sel) {
     box.insertAdjacentHTML('beforeend', linhaHtml(sel));
@@ -41,7 +48,7 @@
 
   // Trocar produto ajusta a quantidade (inteira/fração); ✕ remove a linha (sempre fica ao menos uma).
   function bindLinhas(box) {
-    box.addEventListener('change', e => { if (e.target.classList.contains('mov-prod')) ajustaLinha(e.target.closest('.mov-linha')); });
+    box.addEventListener('change', e => { if (e.target.matches('.mov-prod, .mov-uc-check')) ajustaLinha(e.target.closest('.mov-linha')); });
     box.addEventListener('click', e => {
       const b = e.target.closest('.mov-rem'); if (!b) return;
       if (box.children.length > 1) { b.closest('.mov-linha').remove(); GF.$$('.mov-rem', box).forEach(x => { x.style.visibility = box.children.length > 1 ? 'visible' : 'hidden'; }); }
@@ -53,7 +60,7 @@
     for (const div of GF.$$('.mov-linha', box)) {
       const q = $('.mov-qtd', div), v = Number(q.value);
       if (!(v > 0)) { GF.marcarErro(q); GF.toast('Informe quantidades maiores que zero.', 'error'); return null; }
-      itens.push({ id_produto: Number($('.mov-prod', div).value), quantidade: v });
+      itens.push({ id_produto: Number($('.mov-prod', div).value), quantidade: v, ...($('.mov-uc-check', div).checked ? { em_unidade_compra: true } : {}) });
     }
     return itens;
   }
