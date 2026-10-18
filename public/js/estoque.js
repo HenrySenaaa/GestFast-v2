@@ -23,7 +23,7 @@
       return `<tr data-id="${p.id_produto}" title="Mínimo ${GF.qty(p.estoque_minimo)} ${esc(p.unidade)}${v ? ` • ${v.texto}` : ''}">
         <td><strong>${esc(p.nome_produto)}</strong></td>
         <td>${esc(p.unidade)}</td>
-        <td><strong style="color:${alerta ? '#dc2626' : '#111827'};">${GF.qty(p.quantidade_estoque)}</strong></td>
+        <td><strong style="color:${alerta ? 'var(--danger)' : 'var(--text)'};">${GF.qty(p.quantidade_estoque)}</strong></td>
         <td>${esc(p.lote || '-')}</td>
         <td>${!v ? '-' : v.alerta ? `<span class="badge-status-pill ${v.vencido ? 'badge-urgent' : 'badge-warning'}" title="${v.texto}">${GF.date(p.validade)}</span>` : GF.date(p.validade)}</td>
         <td><input type="number" class="figma-input input-contagem" min="0" step="${GF.qtyAttrs(p.unidade).step}" value="${p.quantidade_estoque}" data-sistema="${p.quantidade_estoque}" aria-label="Contagem física de ${esc(p.nome_produto)}"></td>
