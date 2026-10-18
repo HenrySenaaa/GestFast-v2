@@ -51,6 +51,37 @@ INSERT INTO produto (id_produto, codigo_barras, nome_produto, descricao, unidade
   (11, '78910011', 'Pão Doce Tradicional', 'Pão doce fofinho com creme de baunilha artesanal e coco ralado', 'UN', '80g', 1.10, 3.20, 2.50, 4.00, 60, 20, 'Ativo', 1, '548999', CURDATE() - INTERVAL 1 DAY, ''),
   (12, '78910012', 'Bala Toffee Mastigável', 'Balas caramelizadas artesanais sortidas tradicionais da bomboniere', 'UN', '10g', 0.10, 0.30, 0.20, 0.50, 200, 50, 'Ativo', 4, '546111', CURDATE() + INTERVAL 180 DAY, '');
 
+
+-- Etapa 3: produtos feitos na padaria e insumos (números de exemplo, não são as receitas reais da padaria)
+UPDATE produto SET tipo = 'Produção' WHERE id_produto IN (1, 3, 4, 11);
+
+INSERT INTO produto (id_produto, codigo_barras, nome_produto, descricao, unidade, peso, preco_custo, preco_venda, preco_min, preco_max, quantidade_estoque, estoque_minimo, status, tipo, unidade_compra, fator_conversao, id_categoria, lote, validade, imagem) VALUES
+  (13, '78910013', 'Farinha de Trigo (saco 25 kg)', 'Farinha de trigo para panificação comprada em saco de 25 kg', 'KG', '25kg', 3.40, 3.40, 3.40, 3.40, 120, 50, 'Ativo', 'Insumo', 'Saco', 25, 3, '551200', CURDATE() + INTERVAL 120 DAY, ''),
+  (14, '78910014', 'Fermento Biológico Seco', 'Fermento biológico seco instantâneo para pães', 'KG', '500g', 28.00, 28.00, 28.00, 28.00, 5, 2, 'Ativo', 'Insumo', NULL, 1, 3, '551201', CURDATE() + INTERVAL 90 DAY, ''),
+  (15, '78910015', 'Sal Refinado', 'Sal refinado iodado para massas', 'KG', '1kg', 2.00, 2.00, 2.00, 2.00, 10, 3, 'Ativo', 'Insumo', NULL, 1, 3, '551202', CURDATE() + INTERVAL 365 DAY, ''),
+  (16, '78910016', 'Margarina para Panificação', 'Margarina com sal para massas e folhados', 'KG', '15kg', 12.00, 12.00, 12.00, 12.00, 15, 5, 'Ativo', 'Insumo', 'Balde', 15, 3, '551203', CURDATE() + INTERVAL 60 DAY, ''),
+  (17, '78910017', 'Polvilho Azedo', 'Polvilho azedo para pão de queijo', 'KG', '1kg', 9.00, 9.00, 9.00, 9.00, 20, 5, 'Ativo', 'Insumo', NULL, 1, 3, '551204', CURDATE() + INTERVAL 150 DAY, ''),
+  (18, '78910018', 'Cenoura', 'Cenoura fresca para bolos', 'KG', '1kg', 4.00, 4.00, 4.00, 4.00, 8, 3, 'Ativo', 'Insumo', NULL, 1, 3, '551205', CURDATE() + INTERVAL 10 DAY, ''),
+  (19, '78910019', 'Óleo de Soja', 'Óleo de soja para massas e bolos', 'Lt', '900ml', 8.00, 8.00, 8.00, 8.00, 12, 4, 'Ativo', 'Insumo', NULL, 1, 3, '551206', CURDATE() + INTERVAL 200 DAY, '');
+
+INSERT INTO ficha_tecnica (id_ficha, id_produto, rendimento, nome_rendimento, validade_dias, observacao, atualizada_em, id_usuario) VALUES
+  (1, 4, 12, 'fornada', 1, 'Massa batida 12 min; fermentação 3 h.', NOW() - INTERVAL 2 DAY, 1),
+  (2, 1, 50, 'fornada', 2, 'Bolinhas de 50 g.', NOW() - INTERVAL 2 DAY, 1),
+  (3, 3, 12, 'assadeira', 3, '1 assadeira = 12 fatias.', NOW() - INTERVAL 2 DAY, 1);
+
+INSERT INTO item_ficha_tecnica (id_ficha, id_insumo, quantidade) VALUES
+  (1, 13, 10), (1, 14, 0.2), (1, 15, 0.2), (1, 16, 0.3),
+  (2, 17, 1), (2, 9, 1), (2, 8, 1), (2, 7, 0.5),
+  (3, 13, 0.3), (3, 18, 0.4), (3, 19, 0.2), (3, 5, 1), (3, 9, 1);
+
+-- Custo dos produtos com ficha = custo da receita / rendimento
+UPDATE produto SET preco_custo = 3.63 WHERE id_produto = 4;
+UPDATE produto SET preco_custo = 0.75 WHERE id_produto = 1;
+UPDATE produto SET preco_custo = 1.33 WHERE id_produto = 3;
+
+INSERT INTO producao (id_producao, id_produto, receitas, quantidade, custo_total, data_producao, observacao, status, id_usuario) VALUES
+  (1, 4, 1, 12, 43.60, NOW() - INTERVAL 240 MINUTE, 'Primeira fornada da manhã', 'Concluída', 2);
+
 INSERT INTO requisicao (id_requisicao, codigo_pedido, id_fornecedor, id_produto, produto_nome, quantidade_pedida, quantidade_atendida, unidade, valor_unitario, valor_total, situacao, data_pedido, previsao_entrega, endereco_entrega, observacao, justificativa_cancelamento) VALUES
   (1, 'REQ-9661', 1, 2, 'Café Pilão 320g', 50, 15, 'Pacote', 12.50, 625.00, 'Em Aberto', CURDATE() - INTERVAL 6 DAY, CURDATE() + INTERVAL 1 DAY, 'Padaria Nova York - Rua Visconde de Inhaúma, 450', 'Pedido prioritário de café moído para atender o fluxo matinal da padaria.', NULL),
   (2, 'REQ-9662', 3, 9, 'Ovos Brancos Granjeiros (Dúzia)', 100, 0, 'DZ', 8.50, 850.00, 'Em Aberto', CURDATE() - INTERVAL 5 DAY, CURDATE() + INTERVAL 2 DAY, 'Padaria Nova York - Rua Visconde de Inhaúma, 450', 'Reposição semanal de ovos para a produção contínua da confeitaria.', NULL),
@@ -83,6 +114,13 @@ INSERT INTO movimentacao_estoque (id_movimentacao, tipo_movimentacao, quantidade
   (2, 'Saída', 15, NOW() - INTERVAL 600 MINUTE, 'Vendas acumuladas do balcão de frios e lanches', 'venda', NULL, 3.50, 1, 2),
   (3, 'Saída', 6, NOW() - INTERVAL 420 MINUTE, 'Venda de Café Pilão para clientes do salão', 'venda', NULL, 18.90, 2, 2),
   (4, 'Saída', 3, NOW() - INTERVAL 300 MINUTE, 'Pães franceses que sobraram do fim do dia', 'perda', 'Sobra do dia', 5.50, 4, 2);
+
+INSERT INTO movimentacao_estoque (tipo_movimentacao, quantidade, data_movimentacao, observacao, origem, valor_unitario, id_produto, id_usuario, id_producao) VALUES
+  ('Saída', 10, NOW() - INTERVAL 240 MINUTE, 'Produção #1: Pão Francês', 'producao', 3.40, 13, 2, 1),
+  ('Saída', 0.2, NOW() - INTERVAL 240 MINUTE, 'Produção #1: Pão Francês', 'producao', 28.00, 14, 2, 1),
+  ('Saída', 0.2, NOW() - INTERVAL 240 MINUTE, 'Produção #1: Pão Francês', 'producao', 2.00, 15, 2, 1),
+  ('Saída', 0.3, NOW() - INTERVAL 240 MINUTE, 'Produção #1: Pão Francês', 'producao', 12.00, 16, 2, 1),
+  ('Entrada', 12, NOW() - INTERVAL 240 MINUTE, 'Produção #1: Pão Francês', 'producao', 3.63, 4, 2, 1);
 
 INSERT INTO conferencia (id_conferencia, data_conferencia, observacao, ajustou_estoque, id_usuario) VALUES
   (1, NOW() - INTERVAL 3 DAY, 'Conferência de estoque físico e ajuste de saldos.', TRUE, 2);

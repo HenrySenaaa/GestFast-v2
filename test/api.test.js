@@ -392,3 +392,104 @@ test('v2: esquema otimizado (índices e código da requisição pelo índice)', 
   assert.equal(r.status, 201, r.error);
   assert.equal(r.requisicao.codigo_pedido, `REQ-${Number(mx.n) + 1}`);
 });
+
+// ------------------------------------------------------------------ etapa 3: produção
+const funcEtapa3 = () => logar('henry@padarianovayork.com', 'novasenha1'); // senha trocada no teste de recuperação
+
+test('Etapa 3: tipo de produto, insumo fora do caixa e entrada pela unidade de compra', async () => {
+  const a = await admin();
+  const insumos = (await a.get('/api/products?tipo=Insumo')).products;
+  assert.equal(insumos.length, 7);
+  assert.ok(insumos.every(p => p.tipo === 'Insumo'));
+  assert.match((await a.post('/api/sales', { itens: [{ id_produto: 13, quantidade: 1 }] })).error, /insumo/);
+  const r = await a.post('/api/products', { nome_produto: 'Chocolate em Pó 50%', tipo: 'Insumo', unidade: 'KG', preco_custo: 22.5, id_categoria: 3, estoque_minimo: 1, quantidade_estoque: 2 });
+  assert.equal(r.status, 201, r.error);
+  assert.equal(r.product.preco_venda, 22.5); assert.equal(r.product.tipo, 'Insumo');
+  assert.equal((await a.post('/api/products', { nome_produto: 'Tipo errado', tipo: 'Serviço', preco_venda: 5, id_categoria: 3 })).status, 400);
+
+  const antes = await saldo(13);
+  const e = await a.post('/api/movements', { tipo_movimentacao: 'Entrada', observacao: 'Chegada de farinha do moinho', itens: [{ id_produto: 13, quantidade: 3, em_unidade_compra: true }] });
+  assert.equal(e.status, 201, e.error);
+  assert.equal(await saldo(13), antes + 75); // 3 sacos de 25 kg
+  assert.equal((await a.post('/api/movements', { tipo_movimentacao: 'Entrada', observacao: 'Chegada de fermento', itens: [{ id_produto: 14, quantidade: 1, em_unidade_compra: true }] })).status, 400);
+});
+
+test('Etapa 3: ficha técnica calcula custo e margem e atualiza o custo do produto', async () => {
+  const a = await admin();
+  const lista = (await a.get('/api/recipes')).fichas;
+  assert.ok(lista.some(f => f.nome_produto === 'Pão Francês' && f.id_ficha && f.custo_unitario === 3.63));
+  assert.ok(lista.some(f => f.nome_produto === 'Pão Doce Tradicional' && !f.id_ficha));
+  assert.match((await a.get('/api/production/preview?id_produto=11&receitas=1')).error, /ficha técnica/);
+
+  const itens = [{ id_insumo: 13, quantidade: 2 }, { id_insumo: 5, quantidade: 1 }, { id_insumo: 16, quantidade: 0.5 }];
+  const f = await a.put('/api/recipes/11', { rendimento: 40, nome_rendimento: 'fornada', validade_dias: 2, itens });
+  assert.equal(f.status, 200, f.error);
+  assert.equal(f.ficha.custo_receita, 16); assert.equal(f.ficha.custo_unitario, 0.4); assert.equal(f.ficha.margem_percent, 87.5);
+  assert.equal((await db.getProductById(11)).preco_custo, 0.4);
+
+  assert.match((await a.put('/api/recipes/11', { rendimento: 40, itens: [...itens, { id_insumo: 13, quantidade: 1 }] })).error, /mais de uma vez/);
+  assert.match((await a.put('/api/recipes/11', { rendimento: 40, itens: [{ id_insumo: 11, quantidade: 1 }] })).error, /própria receita/);
+  assert.match((await a.put('/api/recipes/8', { rendimento: 1, itens })).error, /tipo Produção/);
+  assert.equal((await a.put('/api/recipes/11', { rendimento: 40, itens: [] })).status, 400);
+  assert.equal((await a.put('/api/recipes/11', { rendimento: 2.5, itens })).status, 400); // Pão Doce é UN: rendimento inteiro
+  assert.match((await a.put('/api/products/4', { ...(await db.getProductById(4)), tipo: 'Revenda' })).error, /ficha técnica/);
+  assert.equal((await (await funcEtapa3()).put('/api/recipes/11', { rendimento: 40, itens })).status, 403);
+});
+
+test('Etapa 3: produção dá entrada no produto e baixa nos insumos; falta de insumo não grava nada', async () => {
+  const a = await admin();
+  const ids = [4, 13, 14, 15, 16];
+  const saldos = async () => Object.fromEntries(await Promise.all(ids.map(async id => [id, await saldo(id)])));
+  const antes = await saldos();
+
+  const f = await funcEtapa3(); // o padeiro registra a fornada
+  const r = await f.post('/api/production', { id_produto: 4, receitas: 2, observacao: 'Fornadas das 6h' });
+  assert.equal(r.status, 201, r.error);
+  assert.equal(r.producao.quantidade, 24); assert.equal(r.producao.custo_total, 87.2); assert.equal(r.producao.custo_unitario, 3.63);
+  assert.equal(await saldo(4), Math.round((antes[4] + 24) * 1000) / 1000);
+  assert.equal(await saldo(13), antes[13] - 20);
+  assert.equal(await saldo(14), Math.round((antes[14] - 0.4) * 1000) / 1000);
+  assert.equal(await saldo(16), Math.round((antes[16] - 0.6) * 1000) / 1000);
+  const pf = await db.getProductById(4);
+  assert.equal(pf.lote, `P${r.producao.id_producao}`); assert.equal(pf.validade, db.util.dataISO(new Date(Date.now() + 86400000)));
+  assert.equal(r.producao.consumo.length, 4);
+
+  // insumo em unidade inteira é arredondado para cima: meia receita de pão de queijo usa 1 dúzia de ovos e 1 leite
+  const pv = (await a.get('/api/production/preview?id_produto=1&quantidade=25')).preview;
+  assert.equal(pv.consumo.find(i => i.id_insumo === 9).quantidade, 1);
+  assert.equal(pv.consumo.find(i => i.id_insumo === 17).quantidade, 0.5);
+  assert.equal(pv.podeProduzir, true);
+
+  const meio = await saldos();
+  const falta = await a.post('/api/production', { id_produto: 4, receitas: 30 });
+  assert.equal(falta.status, 400);
+  assert.match(falta.error, /Farinha de Trigo/); assert.match(falta.error, /Fermento/);
+  assert.deepEqual(await saldos(), meio);
+  assert.equal((await a.post('/api/production', { id_produto: 8, receitas: 1 })).status, 400); // Leite é revenda
+
+  // estorno: só Administrador/BackOffice, exige motivo e devolve tudo
+  assert.equal((await f.post(`/api/production/${r.producao.id_producao}/cancel`, { motivo: 'Lançado em dobro' })).status, 403);
+  assert.equal((await a.post(`/api/production/${r.producao.id_producao}/cancel`, {})).status, 400);
+  const est = await a.post(`/api/production/${r.producao.id_producao}/cancel`, { motivo: 'Lançado em dobro' });
+  assert.equal(est.status, 200, est.error); assert.equal(est.producao.status, 'Estornada');
+  assert.deepEqual(await saldos(), antes);
+  assert.equal((await a.post(`/api/production/${r.producao.id_producao}/cancel`, { motivo: 'De novo' })).status, 400);
+
+  const lista = await a.get('/api/production?limit=10');
+  assert.ok(lista.total >= 2); assert.ok(lista.producoes.some(p => p.status === 'Estornada'));
+});
+
+test('Etapa 3: relatório de consumo soma só as produções concluídas', async () => {
+  const a = await admin();
+  assert.equal((await a.post('/api/production', { id_produto: 1, quantidade: 25 })).status, 201);
+  const r = (await a.get('/api/reports/consumption')).report;
+  const [[t]] = await db.pool.query("SELECT COUNT(*) AS n, SUM(custo_total) AS c FROM producao WHERE status = 'Concluída'");
+  assert.equal(r.totalProducoes, Number(t.n));
+  assert.equal(r.custoTotal, Math.round(t.c * 100) / 100);
+  assert.ok(r.porInsumo.some(i => i.nome_produto === 'Polvilho Azedo' && i.quantidade === 0.5));
+  const pdf = await a.raw('/api/reports/consumption?format=pdf');
+  assert.equal(pdf.buf.slice(0, 5).toString(), '%PDF-');
+  const xlsx = await a.raw('/api/reports/consumption?format=xlsx');
+  assert.equal(xlsx.buf.slice(0, 2).toString(), 'PK');
+  assert.equal((await (await funcEtapa3()).get('/api/reports/consumption')).status, 403);
+});

@@ -63,6 +63,7 @@ function validarTexto(valor, rotulo, { obrigatorio = false, min = 10, max = 5000
 const FORMAS_PAGAMENTO = ['Dinheiro', 'Cartão Débito', 'Cartão Crédito', 'PIX'];
 const SITUACOES_ABERTAS = ['Em Aberto', 'Cotado', 'AF Gerada'];
 const MOTIVOS_PERDA = ['Vencido', 'Quebra/Avaria', 'Sobra do dia', 'Outro'];
+const TIPOS_PRODUTO = ['Revenda', 'Produção', 'Insumo']; // Insumo não é vendido no caixa
 
 // ------------------------------------------------------------------ consultas e conversões de linhas
 const SQL_USUARIO = 'SELECT u.*, p.nome_perfil FROM usuario u JOIN perfil p ON p.id_perfil = u.id_perfil';
@@ -106,6 +107,17 @@ function mapVenda(v, itens) {
   return o;
 }
 
+const SQL_PRODUCAO = `SELECT pr.*, p.nome_produto, p.unidade, u.nome AS usuario_nome, ue.nome AS estornada_por_nome
+  FROM producao pr JOIN produto p ON p.id_produto = pr.id_produto JOIN usuario u ON u.id_usuario = pr.id_usuario
+  LEFT JOIN usuario ue ON ue.id_usuario = pr.estornada_por`;
+
+const mapProducao = r => ({
+  id_producao: r.id_producao, id_produto: r.id_produto, nome_produto: r.nome_produto, unidade: r.unidade, receitas: r.receitas,
+  quantidade: r.quantidade, custo_total: r.custo_total, custo_unitario: r2(r.custo_total / r.quantidade), data_producao: hm(r.data_producao),
+  observacao: r.observacao || '', status: r.status, usuario_nome: r.usuario_nome,
+  ...(r.status === 'Estornada' ? { estornada_por: r.estornada_por_nome, data_estorno: hm(r.data_estorno), motivo_estorno: r.motivo_estorno } : {})
+});
+
 const SQL_REQ = `SELECT r.*, f.nome AS fornecedor FROM requisicao r JOIN fornecedor f ON f.id_fornecedor = r.id_fornecedor`;
 
 class Database {
@@ -127,6 +139,9 @@ class Database {
     const [rows] = await pool.query(
       "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'requisicao' AND column_name = 'numero_pedido'");
     if (!rows.length) throw erro('O banco ainda não tem as otimizações do GestFast v2. Rode database/migracao-otimizacao.sql no MySQL Workbench.', 500);
+    const [fichas] = await pool.query(
+      "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'ficha_tecnica'");
+    if (!fichas.length) throw erro('O banco ainda não tem as tabelas de produção (etapa 3). Rode database/migracao-etapa3.sql no MySQL Workbench.', 500);
   }
 
   // Transação: roda fn(conn); no fim atualiza os alertas de estoque; erro = rollback de tudo.
@@ -390,8 +405,9 @@ class Database {
   }
 
   // ---------------------------------------------------------------- produtos
-  async getProducts(query, categoriaId, status = 'Ativo') {
+  async getProducts(query, categoriaId, status = 'Ativo', tipo) {
     const where = [], params = [];
+    if (TIPOS_PRODUTO.includes(tipo)) { where.push('tipo = ?'); params.push(tipo); }
     if (status === 'Inativo') where.push("status = 'Inativo'");
     else if (status !== 'todos') where.push("status <> 'Inativo'");
     if (categoriaId) { where.push('id_categoria = ?'); params.push(idNum(categoriaId)); }
@@ -412,6 +428,18 @@ class Database {
   async validarProduto(data, existente, c) {
     const nome = txt(data.nome_produto);
     if (nome.length < 2 || nome.length > 200) throw erro('Informe o nome do produto (2 a 200 caracteres).');
+    const tipo = txt(data.tipo) || (existente ? existente.tipo : 'Revenda');
+    if (!TIPOS_PRODUTO.includes(tipo)) throw erro(`Tipo de produto inválido. Use: ${TIPOS_PRODUTO.join(', ')}.`);
+    const unidadeCompra = txt(data.unidade_compra).slice(0, 20);
+    const fator = unidadeCompra ? Number(data.fator_conversao) : 1;
+    if (!Number.isFinite(fator) || fator <= 0) throw erro('Informe quantas unidades de estoque vêm em 1 unidade de compra (maior que zero).');
+    // Insumo não tem preço de venda: o caixa não o vende, e os preços ficam iguais ao custo para atender aos CHECKs da tabela.
+    if (tipo === 'Insumo') {
+      const custoInsumo = Number(data.preco_custo);
+      if (!Number.isFinite(custoInsumo) || custoInsumo < 0) throw erro('O preço de custo não pode ser negativo.');
+      const p = r2(Math.max(custoInsumo, 0.01));
+      data = { ...data, preco_venda: p, preco_min: p, preco_max: p };
+    }
     const venda = Number(data.preco_venda);
     if (!Number.isFinite(venda) || venda <= 0) throw erro('O preço de venda deve ser maior que zero.');
     const vazio = v => v === '' || v === undefined || v === null;
@@ -434,7 +462,8 @@ class Database {
     const descricao = validarTexto(data.descricao, 'A descrição do produto', { min: 10, max: 5000 });
     const validade = txt(data.validade);
     if (validade && !DATA_RE.test(validade)) throw erro('A data de validade é inválida.');
-    return { nome, venda: r2(venda), custo: r2(custo), min: r2(min), max: r2(max), emin: r3(emin), qtd: r3(qtd), unidade, cat, descricao, validade };
+    return { nome, venda: r2(venda), custo: r2(custo), min: r2(min), max: r2(max), emin: r3(emin), qtd: r3(qtd), unidade, cat, descricao, validade,
+      tipo, unidadeCompra: unidadeCompra || null, fator: r3(fator) };
   }
 
   async codigoEmUso(cod, excetoId, c) {
@@ -447,6 +476,9 @@ class Database {
       const existente = data.id_produto ? await this.getProductById(data.id_produto, c, true) : null;
       if (data.id_produto && !existente) throw erro('Produto não encontrado.', 404);
       const v = await this.validarProduto(data, existente, c);
+      if (existente && existente.tipo === 'Produção' && v.tipo !== 'Produção' && await this.getFicha(existente.id_produto, c)) {
+        throw erro(`"${existente.nome_produto}" tem ficha técnica. Exclua a ficha antes de mudar o tipo do produto.`);
+      }
       let cod = txt(data.codigo_barras);
       if (cod && await this.codigoEmUso(cod, existente ? existente.id_produto : 0, c)) {
         throw erro(`O código "${cod}" já está cadastrado em outro produto.`);
@@ -454,7 +486,8 @@ class Database {
       const campos = {
         nome_produto: v.nome, descricao: v.descricao, unidade: v.unidade, peso: txt(data.peso),
         preco_custo: v.custo, preco_venda: v.venda, preco_min: v.min, preco_max: v.max, quantidade_estoque: v.qtd,
-        estoque_minimo: v.emin, id_categoria: v.cat, lote: txt(data.lote), validade: v.validade || null
+        estoque_minimo: v.emin, id_categoria: v.cat, lote: txt(data.lote), validade: v.validade || null,
+        tipo: v.tipo, unidade_compra: v.unidadeCompra, fator_conversao: v.fator
       };
       if (data.imagem !== undefined) campos.imagem = txt(data.imagem);
       if (existente) {
@@ -716,9 +749,9 @@ class Database {
     const vu = data.valor_unitario !== undefined ? Number(data.valor_unitario) : (data.tipo_movimentacao === 'Saída' ? prod.preco_venda : prod.preco_custo);
     const quando = dataHora();
     const [r] = await c.query(
-      `INSERT INTO movimentacao_estoque (tipo_movimentacao, quantidade, data_movimentacao, observacao, origem, motivo_perda, valor_unitario, id_produto, id_usuario)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [data.tipo_movimentacao, r3(data.quantidade), quando, data.observacao || '', data.origem || 'manual', data.motivo_perda || null, r2(vu), prod.id_produto, ator ? ator.id_usuario : null]
+      `INSERT INTO movimentacao_estoque (tipo_movimentacao, quantidade, data_movimentacao, observacao, origem, motivo_perda, valor_unitario, id_produto, id_usuario, id_producao)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [data.tipo_movimentacao, r3(data.quantidade), quando, data.observacao || '', data.origem || 'manual', data.motivo_perda || null, r2(vu), prod.id_produto, ator ? ator.id_usuario : null, data.id_producao || null]
     );
     return mapMov({
       id_movimentacao: r.insertId, tipo_movimentacao: data.tipo_movimentacao, quantidade: r3(data.quantidade), data_movimentacao: quando,
@@ -758,7 +791,15 @@ class Database {
     for (const it of itens) {
       const prod = await this.getProductById(it.id_produto, c, true);
       if (!prod) throw erro('Produto não cadastrado.', 404);
-      const q = validarQuantidade(prod, it.quantidade);
+      // Entrada informada na unidade de compra (ex.: 3 sacos de 25 kg = 75 KG no estoque).
+      let informado = it.quantidade;
+      if (it.em_unidade_compra && tipo === 'Entrada') {
+        if (!prod.unidade_compra) throw erro(`"${prod.nome_produto}" não tem unidade de compra cadastrada.`);
+        const n = Number(it.quantidade);
+        if (!Number.isFinite(n) || n <= 0) throw erro('A quantidade deve ser maior que zero.');
+        informado = r3(n * prod.fator_conversao);
+      }
+      const q = validarQuantidade(prod, informado);
       const a = acumulado.get(prod.id_produto) || { prod, qtd: 0 };
       a.qtd = r3(a.qtd + q);
       acumulado.set(prod.id_produto, a);
@@ -887,6 +928,7 @@ class Database {
         if (!prod) throw erro('Produto não cadastrado.', 404);
         produtos.set(prod.id_produto, prod);
         if (prod.status !== 'Ativo') throw erro(`"${prod.nome_produto}" está inativo e não pode ser vendido.`);
+        if (prod.tipo === 'Insumo') throw erro(`"${prod.nome_produto}" é insumo de produção e não é vendido no caixa.`);
         const q = validarQuantidade(prod, it.quantidade);
         const preco = it.valor_unitario === undefined || it.valor_unitario === '' ? prod.preco_venda : Number(it.valor_unitario);
         if (!Number.isFinite(preco) || preco <= 0) throw erro('Preço unitário inválido.');
@@ -1227,6 +1269,282 @@ class Database {
     };
   }
 
+  // ---------------------------------------------------------------- fichas técnicas (etapa 3)
+  // Receita de um produto do tipo Produção: insumos por receita e quanto ela rende.
+  // custo_unitario = Σ(quantidade × custo do insumo) / rendimento; margem sobre o preço de venda.
+  calcularFicha(prod, ficha, itens) {
+    const custoReceita = r2(itens.reduce((a, i) => a + i.quantidade * i.preco_custo, 0));
+    const custoUnitario = r2(custoReceita / ficha.rendimento);
+    const margem = prod.preco_venda > 0 ? Math.round(((prod.preco_venda - custoUnitario) / prod.preco_venda) * 1000) / 10 : null;
+    return { custo_receita: custoReceita, custo_unitario: custoUnitario, margem_percent: margem };
+  }
+
+  async itensDasFichas(ids, c = pool) {
+    const mapa = new Map(ids.map(id => [id, []]));
+    if (!ids.length) return mapa;
+    const [rows] = await c.query(
+      `SELECT i.id_ficha, i.id_insumo, i.quantidade, p.nome_produto, p.unidade, p.preco_custo, p.quantidade_estoque, p.status, p.tipo
+       FROM item_ficha_tecnica i JOIN produto p ON p.id_produto = i.id_insumo
+       WHERE i.id_ficha IN (?) ORDER BY p.nome_produto`, [ids]);
+    rows.forEach(r => mapa.get(r.id_ficha).push({
+      id_insumo: r.id_insumo, nome_produto: r.nome_produto, unidade: r.unidade, quantidade: r.quantidade, preco_custo: r.preco_custo,
+      custo: r2(r.quantidade * r.preco_custo), quantidade_estoque: r.quantidade_estoque, status: r.status, tipo: r.tipo
+    }));
+    return mapa;
+  }
+
+  montarFicha(prod, f, itens) {
+    return {
+      id_ficha: f.id_ficha, id_produto: prod.id_produto, nome_produto: prod.nome_produto, unidade: prod.unidade,
+      preco_venda: prod.preco_venda, rendimento: f.rendimento, nome_rendimento: f.nome_rendimento, validade_dias: f.validade_dias,
+      observacao: f.observacao || '', atualizada_em: hm(f.atualizada_em), atualizada_por: f.usuario_nome || null,
+      itens, ...this.calcularFicha(prod, f, itens)
+    };
+  }
+
+  async getFicha(idProduto, c = pool) {
+    const prod = await this.getProductById(idProduto, c);
+    if (!prod) return null;
+    const [rows] = await c.query(
+      'SELECT f.*, u.nome AS usuario_nome FROM ficha_tecnica f LEFT JOIN usuario u ON u.id_usuario = f.id_usuario WHERE f.id_produto = ?', [prod.id_produto]);
+    if (!rows[0]) return null;
+    const itens = await this.itensDasFichas([rows[0].id_ficha], c);
+    return this.montarFicha(prod, rows[0], itens.get(rows[0].id_ficha));
+  }
+
+  // Todos os produtos ativos do tipo Produção, com ou sem ficha (sem ficha = ainda não dá para produzir).
+  async listFichas() {
+    const [rows] = await pool.query(
+      `SELECT p.*, f.id_ficha, f.rendimento, f.nome_rendimento, f.validade_dias, f.observacao AS ficha_obs, f.atualizada_em, u.nome AS usuario_nome
+       FROM produto p LEFT JOIN ficha_tecnica f ON f.id_produto = p.id_produto LEFT JOIN usuario u ON u.id_usuario = f.id_usuario
+       WHERE p.tipo = 'Produção' AND p.status = 'Ativo' ORDER BY p.nome_produto`);
+    const itens = await this.itensDasFichas(rows.filter(r => r.id_ficha).map(r => r.id_ficha));
+    return rows.map(r => {
+      const prod = mapProduto(r);
+      if (!r.id_ficha) {
+        return { id_ficha: null, id_produto: prod.id_produto, nome_produto: prod.nome_produto, unidade: prod.unidade, preco_venda: prod.preco_venda, preco_custo: prod.preco_custo, itens: [] };
+      }
+      return this.montarFicha(prod, { ...r, observacao: r.ficha_obs }, itens.get(r.id_ficha));
+    });
+  }
+
+  saveFicha(idProduto, body, ator) {
+    return this.tx(async c => {
+      const prod = await this.getProductById(idProduto, c, true);
+      if (!prod) throw erro('Produto não encontrado.', 404);
+      if (prod.tipo !== 'Produção') throw erro(`Só produtos do tipo Produção têm ficha técnica. Altere o tipo de "${prod.nome_produto}" no Cadastro de Produtos.`);
+      const rendimento = validarQuantidade(prod, body.rendimento, 'O rendimento');
+      const nomeRend = txt(body.nome_rendimento).slice(0, 40) || 'receita';
+      let validadeDias = null;
+      if (body.validade_dias !== undefined && body.validade_dias !== null && body.validade_dias !== '') {
+        validadeDias = Number(body.validade_dias);
+        if (!Number.isInteger(validadeDias) || validadeDias < 0 || validadeDias > 365) throw erro('A validade do produto pronto deve ser um número inteiro de dias, de 0 a 365.');
+      }
+      const obs = txt(body.observacao).slice(0, 2000);
+      const itens = Array.isArray(body.itens) ? body.itens : [];
+      if (!itens.length) throw erro('Informe ao menos um insumo na ficha técnica.');
+      const vistos = new Set();
+      const linhas = [];
+      for (const it of itens) {
+        const ins = await this.getProductById(it.id_insumo, c);
+        if (!ins) throw erro('Insumo não cadastrado.', 404);
+        if (ins.id_produto === prod.id_produto) throw erro('O produto não pode ser insumo da própria receita.');
+        if (ins.status !== 'Ativo') throw erro(`"${ins.nome_produto}" está inativo e não pode entrar na receita.`);
+        if (vistos.has(ins.id_produto)) throw erro(`"${ins.nome_produto}" aparece mais de uma vez na receita.`);
+        vistos.add(ins.id_produto);
+        const q = Number(it.quantidade);
+        if (!Number.isFinite(q) || q <= 0) throw erro(`Informe a quantidade de "${ins.nome_produto}" (maior que zero).`);
+        linhas.push([ins.id_produto, r3(q)]);
+      }
+      await c.query(
+        `INSERT INTO ficha_tecnica (id_produto, rendimento, nome_rendimento, validade_dias, observacao, atualizada_em, id_usuario)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE rendimento = VALUES(rendimento), nome_rendimento = VALUES(nome_rendimento), validade_dias = VALUES(validade_dias),
+           observacao = VALUES(observacao), atualizada_em = VALUES(atualizada_em), id_usuario = VALUES(id_usuario)`,
+        [prod.id_produto, rendimento, nomeRend, validadeDias, obs, dataHora(), ator ? ator.id_usuario : null]);
+      const [[f]] = await c.query('SELECT id_ficha FROM ficha_tecnica WHERE id_produto = ?', [prod.id_produto]);
+      await c.query('DELETE FROM item_ficha_tecnica WHERE id_ficha = ?', [f.id_ficha]);
+      await c.query('INSERT INTO item_ficha_tecnica (id_ficha, id_insumo, quantidade) VALUES ?', [linhas.map(l => [f.id_ficha, ...l])]);
+      const ficha = await this.getFicha(prod.id_produto, c);
+      // O custo do produto passa a ser o da receita (as perdas da etapa 2 são valorizadas por ele).
+      await c.query('UPDATE produto SET preco_custo = ? WHERE id_produto = ?', [ficha.custo_unitario, prod.id_produto]);
+      return ficha;
+    });
+  }
+
+  deleteFicha(idProduto) {
+    return this.tx(async c => {
+      const [r] = await c.query('DELETE FROM ficha_tecnica WHERE id_produto = ?', [idNum(idProduto)]);
+      if (!r.affectedRows) throw erro('Este produto não tem ficha técnica.', 404);
+      return { id_produto: idNum(idProduto) };
+    });
+  }
+
+  // ---------------------------------------------------------------- produção (etapa 3)
+  // Calcula o que uma produção consome. Informar `receitas` (fornadas) ou `quantidade` (do produto pronto).
+  // Insumo controlado em unidade inteira (UN, DZ, Pacote) é arredondado para cima: 2,5 ovos viram 3.
+  // lock = true trava produto e insumos até o fim da transação (usado ao registrar).
+  async planejarProducao(body, c = pool, lock = false) {
+    const prod = await this.getProductById(body.id_produto, c, lock);
+    if (!prod) throw erro('Produto não encontrado.', 404);
+    if (prod.tipo !== 'Produção') throw erro(`"${prod.nome_produto}" não é um produto de produção própria.`);
+    if (prod.status !== 'Ativo') throw erro(`"${prod.nome_produto}" está inativo.`);
+    const ficha = await this.getFicha(prod.id_produto, c);
+    if (!ficha) throw erro(`"${prod.nome_produto}" ainda não tem ficha técnica. Cadastre a receita antes de produzir.`);
+    const vazio = v => v === undefined || v === null || v === '';
+    let quantidade;
+    if (!vazio(body.receitas)) {
+      const n = Number(body.receitas);
+      if (!Number.isFinite(n) || n <= 0) throw erro(`Informe quantas vezes a receita (${ficha.nome_rendimento}) foi feita (maior que zero).`);
+      quantidade = r3(n * ficha.rendimento);
+    } else {
+      quantidade = Number(body.quantidade);
+    }
+    quantidade = validarQuantidade(prod, quantidade, 'A quantidade produzida');
+    const fator = quantidade / ficha.rendimento;
+    const consumo = [];
+    for (const it of ficha.itens) {
+      const ins = await this.getProductById(it.id_insumo, c, lock);
+      let q = it.quantidade * fator;
+      q = aceitaFracao(ins.unidade) ? Math.max(r3(q), 0.001) : Math.ceil(r3(q));
+      consumo.push({
+        id_insumo: ins.id_produto, nome_produto: ins.nome_produto, unidade: ins.unidade, quantidade: q, preco_custo: ins.preco_custo,
+        custo: r2(q * ins.preco_custo), saldo: ins.quantidade_estoque, falta: q > ins.quantidade_estoque ? r3(q - ins.quantidade_estoque) : 0, ins
+      });
+    }
+    const custoTotal = r2(consumo.reduce((a, i) => a + i.custo, 0));
+    return {
+      prod, ficha, receitas: r3(fator), quantidade, custo_total: custoTotal, custo_unitario: r2(custoTotal / quantidade),
+      consumo, faltas: consumo.filter(i => i.falta > 0)
+    };
+  }
+
+  async previewProducao(query) {
+    const p = await this.planejarProducao(query);
+    return {
+      id_produto: p.prod.id_produto, nome_produto: p.prod.nome_produto, unidade: p.prod.unidade, nome_rendimento: p.ficha.nome_rendimento,
+      rendimento: p.ficha.rendimento, receitas: p.receitas, quantidade: p.quantidade, custo_total: p.custo_total, custo_unitario: p.custo_unitario,
+      consumo: p.consumo.map(({ ins, ...i }) => i), podeProduzir: !p.faltas.length
+    };
+  }
+
+  registrarProducao(body, ator) {
+    return this.tx(async c => {
+      const p = await this.planejarProducao(body, c, true);
+      if (p.faltas.length) {
+        const lista = p.faltas.map(i => `${i.nome_produto} (faltam ${i.falta} ${i.unidade})`).join('; ');
+        throw erro(`Insumos insuficientes para produzir ${p.quantidade} ${p.prod.unidade} de "${p.prod.nome_produto}": ${lista}.`);
+      }
+      const obs = txt(body.observacao).slice(0, 1000);
+      const [r] = await c.query(
+        `INSERT INTO producao (id_produto, receitas, quantidade, custo_total, data_producao, observacao, status, id_usuario)
+         VALUES (?, ?, ?, ?, ?, ?, 'Concluída', ?)`,
+        [p.prod.id_produto, p.receitas, p.quantidade, p.custo_total, dataHora(), obs, ator.id_usuario]);
+      const id = r.insertId;
+      const desc = `Produção #${id}: ${p.prod.nome_produto}`;
+      for (const i of p.consumo) {
+        await c.query('UPDATE produto SET quantidade_estoque = ? WHERE id_produto = ?', [r3(i.ins.quantidade_estoque - i.quantidade), i.id_insumo]);
+        await this.addMovimentacao(c, { tipo_movimentacao: 'Saída', quantidade: i.quantidade, origem: 'producao', observacao: desc, valor_unitario: i.preco_custo, id_producao: id }, i.ins, ator);
+      }
+      const campos = { quantidade_estoque: r3(p.prod.quantidade_estoque + p.quantidade), preco_custo: p.custo_unitario };
+      // Validade do produto pronto conta a partir de hoje; o lote identifica a produção (alerta de validade da etapa 2).
+      if (p.ficha.validade_dias !== null) Object.assign(campos, { validade: dataISO(deslocar(p.ficha.validade_dias)), lote: `P${id}` });
+      await c.query('UPDATE produto SET ? WHERE id_produto = ?', [campos, p.prod.id_produto]);
+      await this.addMovimentacao(c, { tipo_movimentacao: 'Entrada', quantidade: p.quantidade, origem: 'producao', observacao: desc, valor_unitario: p.custo_unitario, id_producao: id }, p.prod, ator);
+      return this.getProducao(id, c);
+    });
+  }
+
+  // Desfaz uma produção lançada errado: devolve os insumos e tira o produto pronto do estoque.
+  estornarProducao(id, body, ator) {
+    return this.tx(async c => {
+      const [rows] = await c.query('SELECT * FROM producao WHERE id_producao = ? FOR UPDATE', [idNum(id)]);
+      const pr = rows[0];
+      if (!pr) throw erro('Produção não encontrada.', 404);
+      if (pr.status === 'Estornada') throw erro('Esta produção já foi estornada.');
+      const motivo = validarTexto(body.motivo, 'O motivo do estorno', { obrigatorio: true, min: 5, max: 500 });
+      const [movs] = await c.query("SELECT * FROM movimentacao_estoque WHERE id_producao = ? AND origem = 'producao' ORDER BY id_movimentacao", [pr.id_producao]);
+      const desc = `Estorno da produção #${pr.id_producao}: ${motivo}`;
+      for (const m of movs) {
+        const prod = await this.getProductById(m.id_produto, c, true);
+        const sai = m.tipo_movimentacao === 'Entrada';
+        if (sai && prod.quantidade_estoque < m.quantidade) {
+          throw erro(`Não dá para estornar: parte de "${prod.nome_produto}" já foi vendida ou baixada (saldo ${prod.quantidade_estoque} ${prod.unidade}, a produção deu entrada em ${m.quantidade}).`);
+        }
+        await c.query('UPDATE produto SET quantidade_estoque = ? WHERE id_produto = ?', [r3(sai ? prod.quantidade_estoque - m.quantidade : prod.quantidade_estoque + m.quantidade), prod.id_produto]);
+        await this.addMovimentacao(c, { tipo_movimentacao: sai ? 'Saída' : 'Entrada', quantidade: m.quantidade, origem: 'estorno', observacao: desc, valor_unitario: m.valor_unitario, id_producao: pr.id_producao }, prod, ator);
+      }
+      await c.query("UPDATE producao SET status = 'Estornada', estornada_por = ?, data_estorno = ?, motivo_estorno = ? WHERE id_producao = ?",
+        [ator.id_usuario, dataHora(), motivo, pr.id_producao]);
+      return this.getProducao(pr.id_producao, c);
+    });
+  }
+
+  filtroProducoes({ from, to, status }) {
+    this.validarPeriodo({ from, to });
+    const where = [], params = [];
+    if (from) { where.push('pr.data_producao >= ?'); params.push(`${from} 00:00:00`); }
+    if (to) { where.push('pr.data_producao <= ?'); params.push(`${to} 23:59:59`); }
+    if (['Concluída', 'Estornada'].includes(status)) { where.push('pr.status = ?'); params.push(status); }
+    return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', params };
+  }
+
+  async getProducoes({ from, to, status, limite, offset } = {}) {
+    const f = this.filtroProducoes({ from, to, status });
+    const [rows] = await pool.query(listagem(SQL_PRODUCAO, 'producao pr', f.sql, 'pr.id_producao DESC', paginar(limite, offset)), f.params);
+    return rows.map(mapProducao);
+  }
+
+  async contarProducoes(filtros = {}) {
+    const f = this.filtroProducoes(filtros);
+    const [[r]] = await pool.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN pr.status = 'Concluída' THEN pr.custo_total END), 0) AS custo FROM producao pr${f.sql}`, f.params);
+    return { total: Number(r.n), custoTotal: r2(r.custo) };
+  }
+
+  async getProducao(id, c = pool) {
+    const [rows] = await c.query(`${SQL_PRODUCAO} WHERE pr.id_producao = ?`, [idNum(id)]);
+    if (!rows[0]) return undefined;
+    const [movs] = await c.query(
+      `SELECT m.id_produto, m.quantidade, m.valor_unitario, p.nome_produto, p.unidade FROM movimentacao_estoque m
+       JOIN produto p ON p.id_produto = m.id_produto
+       WHERE m.id_producao = ? AND m.origem = 'producao' AND m.tipo_movimentacao = 'Saída' ORDER BY p.nome_produto`, [rows[0].id_producao]);
+    return {
+      ...mapProducao(rows[0]),
+      consumo: movs.map(m => ({ id_insumo: m.id_produto, nome_produto: m.nome_produto, unidade: m.unidade, quantidade: m.quantidade, custo: r2(m.quantidade * m.valor_unitario) }))
+    };
+  }
+
+  // Relatório de consumo: o que a produção gastou de cada insumo e quanto custou cada produto feito.
+  // Só produções concluídas (as estornadas foram desfeitas). A categoria filtra o produto produzido.
+  async getRelatorioConsumo({ from, to, categoria } = {}) {
+    const f = this.filtroProducoes({ from, to, status: 'Concluída' });
+    const cat = categoria ? Number(categoria) : null;
+    const where = f.sql + (cat ? `${f.sql ? ' AND' : ' WHERE'} p.id_categoria = ?` : '');
+    const params = cat ? [...f.params, cat] : f.params;
+    const [prods] = await pool.query(
+      `SELECT pr.id_produto, p.nome_produto, p.unidade, c.nome_categoria AS categoria, COUNT(*) AS producoes,
+              SUM(pr.receitas) AS receitas, SUM(pr.quantidade) AS quantidade, SUM(pr.custo_total) AS custo_total
+       FROM producao pr JOIN produto p ON p.id_produto = pr.id_produto JOIN categoria c ON c.id_categoria = p.id_categoria
+       ${where} GROUP BY pr.id_produto, p.nome_produto, p.unidade, c.nome_categoria ORDER BY custo_total DESC`, params);
+    const [insumos] = await pool.query(
+      `SELECT m.id_produto AS id_insumo, i.nome_produto, i.unidade, SUM(m.quantidade) AS quantidade, SUM(m.quantidade * m.valor_unitario) AS custo_total
+       FROM producao pr JOIN produto p ON p.id_produto = pr.id_produto
+       JOIN movimentacao_estoque m ON m.id_producao = pr.id_producao AND m.origem = 'producao' AND m.tipo_movimentacao = 'Saída'
+       JOIN produto i ON i.id_produto = m.id_produto
+       ${where} GROUP BY m.id_produto, i.nome_produto, i.unidade ORDER BY custo_total DESC`, params);
+    const porProduto = prods.map(r => ({
+      id_produto: r.id_produto, nome_produto: r.nome_produto, unidade: r.unidade, categoria: r.categoria, producoes: Number(r.producoes),
+      receitas: r3(r.receitas), quantidade: r3(r.quantidade), custo_total: r2(r.custo_total), custo_unitario: r2(r.custo_total / r.quantidade)
+    }));
+    return {
+      filtros: { from: from || null, to: to || null, categoria: cat },
+      totalProducoes: porProduto.reduce((a, p) => a + p.producoes, 0), custoTotal: r2(porProduto.reduce((a, p) => a + p.custo_total, 0)),
+      porProduto,
+      porInsumo: insumos.map(r => ({ id_insumo: r.id_insumo, nome_produto: r.nome_produto, unidade: r.unidade, quantidade: r3(r.quantidade), custo_total: r2(r.custo_total) }))
+    };
+  }
+
   // ---------------------------------------------------------------- busca global (barra de pesquisa)
   // `permitido(perm)` informa o que o perfil do usuário pode ver; nada além disso é retornado.
   // A collation do banco (utf8mb4_0900_ai_ci) já ignora acentos e maiúsculas: "pao" acha "Pão".
@@ -1275,4 +1593,4 @@ class Database {
 
 module.exports = new Database();
 module.exports.Database = Database;
-module.exports.util = { dataISO, dataHora, r2, r3, FORMAS_PAGAMENTO, MOTIVOS_PERDA };
+module.exports.util = { dataISO, dataHora, r2, r3, FORMAS_PAGAMENTO, MOTIVOS_PERDA, TIPOS_PRODUTO };

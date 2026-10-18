@@ -44,6 +44,8 @@
     <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M18 5l2 2"/></symbol>
     <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
     <symbol id="i-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H20v15H5.5A1.5 1.5 0 0 0 4 19.5z"/><path d="M4 19.5A1.5 1.5 0 0 0 5.5 21H20v-3"/><path d="M9 7h7M9 11h5"/></symbol>
+    <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1.2-3.6 2.2-4.6.3 1.6 1.1 2.6 2.3 3.1C11 9 11.2 5.6 12 3z"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></symbol>
@@ -170,6 +172,9 @@
         <a href="#saidas" class="nav-item" data-view="saidas" data-perm="movimentos:ver" title="Saída de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-out"/></svg><span class="nav-text">Saída de Produtos</span></a>
         <a href="#requisicoes" class="nav-item" data-view="requisicoes" data-perm="requisicoes:ver" title="Requisição"><svg class="nav-ico" aria-hidden="true"><use href="#i-clipboard"/></svg><span class="nav-text">Requisição</span></a>
         <a href="#cadastro" class="nav-item" data-view="cadastro" data-perm="produtos:editar" title="Cadastro de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-tag"/></svg><span class="nav-text">Cadastro de Produtos</span></a>
+        <div class="nav-group-label">Produção</div>
+        <a href="#fichas" class="nav-item" data-view="fichas" data-perm="producao:ver" title="Ficha Técnica"><svg class="nav-ico" aria-hidden="true"><use href="#i-book"/></svg><span class="nav-text">Ficha Técnica</span></a>
+        <a href="#producao" class="nav-item" data-view="producao" data-perm="producao:ver" title="Produção"><svg class="nav-ico" aria-hidden="true"><use href="#i-flame"/></svg><span class="nav-text">Produção</span></a>
         <div class="nav-group-label">Vendas</div>
         <a href="#vendas" class="nav-item" data-view="vendas" data-perm="vendas:vender" title="Venda"><svg class="nav-ico" aria-hidden="true"><use href="#i-cart"/></svg><span class="nav-text">Venda</span></a>
         <a href="#historico" class="nav-item" data-view="historico" data-perm="vendas:ver" title="Histórico de Vendas"><svg class="nav-ico" aria-hidden="true"><use href="#i-receipt"/></svg><span class="nav-text">Histórico de Vendas</span></a>
@@ -343,6 +348,13 @@
                 <div class="form-col-figma">
                   <div class="figma-input-group"><label for="prod-nome">Nome do Produto *</label><input type="text" id="prod-nome" class="figma-input" placeholder="Pão de Queijo" maxlength="200"></div>
                   <div class="figma-input-group"><label for="prod-codigo">Código</label><input type="text" id="prod-codigo" class="figma-input" placeholder="78910001" maxlength="100"></div>
+                  <div class="figma-input-group">
+                    <label for="prod-tipo">Tipo *</label>
+                    <select id="prod-tipo" class="figma-input" aria-describedby="prod-tipo-ajuda">
+                      <option value="Revenda">Revenda (comprado pronto)</option><option value="Produção">Produção própria</option><option value="Insumo">Insumo (não vai ao caixa)</option>
+                    </select>
+                    <small id="prod-tipo-ajuda" class="field-hint">Produção própria tem ficha técnica; insumo é gasto na produção.</small>
+                  </div>
                   <div class="figma-input-group"><label for="prod-preco-custo">Preço custo</label><input type="number" id="prod-preco-custo" class="figma-input" step="0.01" min="0" placeholder="1.20"></div>
                   <div class="figma-input-group"><label for="prod-preco-min">Preço Min</label><input type="number" id="prod-preco-min" class="figma-input" step="0.01" min="0" placeholder="2.50"></div>
                   <div class="figma-input-group"><label for="prod-estoque-minimo">Estoque Min *</label><input type="number" id="prod-estoque-minimo" class="figma-input" min="0" step="1" placeholder="15"></div>
@@ -356,6 +368,7 @@
                       <option value="DZ">DZ</option><option value="Fatia">Fatia</option><option value="Lt">Lt</option>
                     </select>
                   </div>
+                  <div class="figma-input-group"><label for="prod-unidade-compra">Unidade de compra</label><input type="text" id="prod-unidade-compra" class="figma-input" placeholder="Saco, Caixa, Fardo..." maxlength="20" aria-describedby="prod-conversao-ajuda"></div>
                   <div class="figma-input-group"><label for="prod-preco-venda">Preço Venda *</label><input type="number" id="prod-preco-venda" class="figma-input" step="0.01" min="0.01" placeholder="3.50"></div>
                   <div class="figma-input-group"><label for="prod-preco-max">Preço Max</label><input type="number" id="prod-preco-max" class="figma-input" step="0.01" min="0" placeholder="5.00"></div>
                   <div class="figma-input-group"><label for="prod-categoria">Categoria *</label><select id="prod-categoria" class="figma-input" aria-label="Categoria do produto"></select></div>
@@ -364,6 +377,7 @@
                   <div class="product-preview-frame"><img id="prod-preview-img" alt="Foto do Produto" class="product-render-photo"></div>
                   <input type="file" id="prod-imagem-file" accept="image/png,image/jpeg,image/webp,image/gif" class="is-hidden" aria-label="Selecionar imagem do produto">
                   <button type="button" class="btn-figma-upload" id="btn-upload-img"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-camera"/></svg> Enviar foto</button>
+                  <div class="figma-input-group extra-field"><label for="prod-fator-conversao">1 unidade de compra =</label><input type="number" id="prod-fator-conversao" class="figma-input" min="0.001" step="0.001" placeholder="25" aria-describedby="prod-conversao-ajuda"><small id="prod-conversao-ajuda" class="field-hint">Ex.: 1 Saco = 25 KG. Na entrada dá para informar em sacos.</small></div>
                   <div class="figma-input-group extra-field"><label for="prod-estoque-atual">Estoque Atual Inicial</label><input type="number" id="prod-estoque-atual" class="figma-input" min="0" step="1" placeholder="10"></div>
                   <div class="figma-input-group extra-field"><label for="prod-lote">Lote</label><input type="text" id="prod-lote" class="figma-input" placeholder="546320" maxlength="40"></div>
                   <div class="figma-input-group extra-field"><label for="prod-validade">Validade</label><input type="date" id="prod-validade" class="figma-input"></div>
@@ -393,6 +407,9 @@
               <select id="catalogo-filtro-categoria" class="select-field" aria-label="Filtrar catálogo por categoria"><option value="">Todas as categorias</option></select>
               <select id="catalogo-filtro-status" class="select-field" aria-label="Filtrar catálogo por situação">
                 <option value="Ativo">Ativos</option><option value="Inativo">Inativos</option><option value="todos">Todos</option>
+              </select>
+              <select id="catalogo-filtro-tipo" class="select-field" aria-label="Filtrar catálogo por tipo">
+                <option value="">Todos os tipos</option><option value="Revenda">Revenda</option><option value="Produção">Produção</option><option value="Insumo">Insumos</option>
               </select>
             </div>
             <div class="table-responsive small-table">
@@ -451,6 +468,51 @@
             </table>
           </div>
           <div class="pager" id="entradas-pager"></div>
+        </div>
+      </section>
+
+      <!-- PRODUÇÃO: FICHA TÉCNICA -->
+      <section id="view-fichas" class="app-view">
+        <div class="figma-tab-header">
+          <div>
+            <div class="figma-tab-title-pill">Ficha Técnica</div>
+            <p class="page-sub">Receita de cada produto feito na padaria: insumos, rendimento, custo real e margem.</p>
+          </div>
+        </div>
+        <div class="figma-card full-panel">
+          <div class="filter-toolbar"><span class="toolbar-hint" id="fichas-resumo"></span></div>
+          <div class="table-responsive">
+            <table class="figma-styled-table">
+              <thead><tr><th>Produto</th><th>Rendimento</th><th>Custo</th><th>Preço venda</th><th>Margem</th><th>Atualizada</th><th>Ações</th></tr></thead>
+              <tbody id="fichas-corpo"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- PRODUÇÃO: REGISTRO -->
+      <section id="view-producao" class="app-view">
+        <div class="figma-tab-header">
+          <div>
+            <div class="figma-tab-title-pill">Produção</div>
+            <p class="page-sub">Cada fornada registrada dá entrada no produto pronto e baixa nos insumos da receita.</p>
+          </div>
+          <button class="btn btn-primary" id="btn-registrar-producao" data-perm="producao:registrar"><svg class="icon" aria-hidden="true"><use href="#i-flame"/></svg> Registrar produção</button>
+        </div>
+        <div class="figma-card full-panel">
+          <div class="filter-toolbar">
+            <label class="inline-field">De <input type="date" id="prod-de" class="select-field"></label>
+            <label class="inline-field">Até <input type="date" id="prod-ate" class="select-field"></label>
+            <button class="btn btn-sm btn-secondary" id="prod-limpar">Limpar filtros</button>
+            <span class="toolbar-hint" id="producao-resumo"></span>
+          </div>
+          <div class="table-responsive">
+            <table class="figma-styled-table">
+              <thead><tr><th>Data</th><th>Produto</th><th>Receitas</th><th>Produzido</th><th>Custo R$</th><th>Unid. R$</th><th>Responsável</th><th>Situação</th><th>Ações</th></tr></thead>
+              <tbody id="producao-corpo"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="producao-pager"></div>
         </div>
       </section>
 
@@ -571,6 +633,7 @@
               <button class="rel-tab active" role="tab" data-rel="vendas" type="button">Vendas</button>
               <button class="rel-tab" role="tab" data-rel="estoque" type="button">Estoque</button>
               <button class="rel-tab" role="tab" data-rel="perdas" type="button">Perdas</button>
+              <button class="rel-tab" role="tab" data-rel="consumo" type="button">Consumo</button>
             </div>
             <label class="inline-field">De <input type="date" id="rel-de" class="select-field"></label>
             <label class="inline-field">Até <input type="date" id="rel-ate" class="select-field"></label>
@@ -812,6 +875,7 @@
   <script src="js/produtos.js"></script>
   <script src="js/movimentos.js"></script>
   <script src="js/vendas.js"></script>
+  <script src="js/producao.js"></script>
   <script src="js/relatorios.js"></script>
   <script src="js/admin.js"></script>
   <script src="js/main.js"></script>

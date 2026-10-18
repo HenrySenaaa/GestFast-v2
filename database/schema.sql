@@ -90,11 +90,15 @@ CREATE TABLE produto (
   validade           DATE,
   imagem             VARCHAR(255),
   status             ENUM('Ativo','Inativo') NOT NULL DEFAULT 'Ativo',
+  tipo               ENUM('Revenda','Produção','Insumo') NOT NULL DEFAULT 'Revenda', -- Insumo não é vendido no caixa
+  unidade_compra     VARCHAR(20),                       -- ex.: 'Saco' (compra) com estoque em KG
+  fator_conversao    DECIMAL(12,3) NOT NULL DEFAULT 1,  -- quantas unidades de estoque vêm em 1 unidade de compra
   id_categoria       INT NOT NULL,
   FOREIGN KEY (id_categoria) REFERENCES categoria(id_categoria),
   CHECK (preco_venda > 0),
   CHECK (preco_min <= preco_venda AND preco_venda <= preco_max),
-  CHECK (quantidade_estoque >= 0)
+  CHECK (quantidade_estoque >= 0),
+  CHECK (fator_conversao > 0)
 ) ENGINE=InnoDB;
 
 CREATE TABLE alerta_estoque (
@@ -183,6 +187,53 @@ CREATE TABLE item_venda (
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------
+-- Produção: ficha técnica (receita) e registro de produção com baixa dos insumos
+-- ---------------------------------------------------------------------
+CREATE TABLE ficha_tecnica (
+  id_ficha        INT PRIMARY KEY AUTO_INCREMENT,
+  id_produto      INT NOT NULL UNIQUE,              -- produto pronto (tipo Produção)
+  rendimento      DECIMAL(12,3) NOT NULL,           -- quanto 1 receita rende, na unidade do produto
+  nome_rendimento VARCHAR(40) NOT NULL DEFAULT 'receita', -- ex.: fornada, assadeira
+  validade_dias   INT,                              -- validade do produto pronto (NULL = não altera)
+  observacao      TEXT,
+  atualizada_em   DATETIME NOT NULL,
+  id_usuario      INT,
+  FOREIGN KEY (id_produto) REFERENCES produto(id_produto),
+  FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario),
+  CHECK (rendimento > 0),
+  CHECK (validade_dias IS NULL OR validade_dias >= 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE item_ficha_tecnica (
+  id_ficha   INT NOT NULL,
+  id_insumo  INT NOT NULL,
+  quantidade DECIMAL(12,3) NOT NULL,                -- por receita, na unidade do insumo
+  PRIMARY KEY (id_ficha, id_insumo),
+  FOREIGN KEY (id_ficha) REFERENCES ficha_tecnica(id_ficha) ON DELETE CASCADE,
+  FOREIGN KEY (id_insumo) REFERENCES produto(id_produto),
+  CHECK (quantidade > 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE producao (
+  id_producao   INT PRIMARY KEY AUTO_INCREMENT,
+  id_produto    INT NOT NULL,
+  receitas      DECIMAL(12,3) NOT NULL,             -- quantas receitas (fornadas) foram feitas
+  quantidade    DECIMAL(12,3) NOT NULL,             -- quanto entrou do produto pronto
+  custo_total   DECIMAL(10,2) NOT NULL DEFAULT 0,   -- custo dos insumos consumidos
+  data_producao DATETIME NOT NULL,
+  observacao    TEXT,
+  status        ENUM('Concluída','Estornada') NOT NULL DEFAULT 'Concluída',
+  id_usuario    INT NOT NULL,
+  estornada_por INT,
+  data_estorno  DATETIME,
+  motivo_estorno VARCHAR(500),
+  FOREIGN KEY (id_produto) REFERENCES produto(id_produto),
+  FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario),
+  FOREIGN KEY (estornada_por) REFERENCES usuario(id_usuario),
+  CHECK (receitas > 0 AND quantidade > 0)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
 -- Movimentações de estoque (histórico de toda entrada e saída)
 -- ---------------------------------------------------------------------
 CREATE TABLE movimentacao_estoque (
@@ -191,13 +242,15 @@ CREATE TABLE movimentacao_estoque (
   quantidade        DECIMAL(12,3) NOT NULL CHECK (quantidade > 0),
   data_movimentacao DATETIME NOT NULL,
   observacao        TEXT,
-  origem            ENUM('manual','venda','requisicao','conferencia','estorno','ajuste','perda') NOT NULL DEFAULT 'manual',
+  origem            ENUM('manual','venda','requisicao','conferencia','estorno','ajuste','perda','producao') NOT NULL DEFAULT 'manual',
   motivo_perda      ENUM('Vencido','Quebra/Avaria','Sobra do dia','Outro'),  -- só quando origem = 'perda'
   valor_unitario    DECIMAL(10,2) NOT NULL DEFAULT 0,
   id_produto        INT NOT NULL,
   id_usuario        INT,                              -- NULL = movimento do sistema
+  id_producao       INT,                              -- produção que gerou o movimento (origem 'producao' e seu estorno)
   FOREIGN KEY (id_produto) REFERENCES produto(id_produto),
-  FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario)
+  FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario),
+  FOREIGN KEY (id_producao) REFERENCES producao(id_producao)
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------
@@ -250,6 +303,8 @@ CREATE INDEX idx_alerta_status ON alerta_estoque(status_alerta, id_produto);
 CREATE INDEX idx_requisicao_situacao ON requisicao(situacao);                    -- requisições em aberto (painel)
 CREATE INDEX idx_sessao_expira ON sessao(expira);                                -- limpeza das sessões vencidas
 CREATE INDEX idx_token_reset_expira ON token_reset(expira);
+CREATE INDEX idx_producao_data ON producao(data_producao);                       -- tela de Produção e relatório de consumo
+CREATE INDEX idx_produto_tipo ON produto(tipo, status);                          -- listas de insumos / produtos de produção
 
 -- Número do pedido (REQ-9661 -> 9661) calculado pelo banco e indexado: o próximo código sai do índice,
 -- sem ler a tabela inteira.
