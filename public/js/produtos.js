@@ -85,7 +85,7 @@
     $('#catalogo-produtos-corpo').innerHTML = lista.length ? lista.map(p => `
       <tr data-id="${p.id_produto}" class="row-select ${editando === p.id_produto ? 'row-selected' : ''} ${p.status === 'Inativo' ? 'row-inactive' : ''}">
         <td><code>${esc(p.codigo_barras)}</code></td>
-        <td><strong>${esc(p.nome_produto)}</strong><br><small style="color:#6b7280;">${esc(p.unidade)} - ${esc(p.peso || '')}${p.status === 'Inativo' ? ' • Inativo' : ''}</small></td>
+        <td><strong>${esc(p.nome_produto)}</strong><br><small style="color:var(--text-muted);">${esc(p.unidade)} - ${esc(p.peso || '')}${p.status === 'Inativo' ? ' • Inativo' : ''}</small></td>
         <td>R$ ${Number(p.preco_venda).toFixed(2)}</td>
         <td><strong>${GF.qty(p.quantidade_estoque)}</strong></td>
         <td>

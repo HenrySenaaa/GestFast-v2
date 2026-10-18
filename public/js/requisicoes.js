@@ -36,7 +36,7 @@
         : `<span class="badge-status-pill badge-${r.situacao === 'Finalizado' ? 'info' : 'warning'} badge-click" data-act="detalhes" title="Clique para ver o histórico">${esc(r.situacao)}</span>`;
       return `<tr class="row-select ${selecionada === r.id_requisicao ? 'row-selected' : ''}" data-id="${r.id_requisicao}">
         <td><strong>${esc(r.codigo_pedido)}</strong></td><td>${esc(r.fornecedor)}</td><td>${esc(r.produto_nome)}</td>
-        <td>x${GF.qty(r.quantidade_pedida)}${r.quantidade_atendida ? `<br><small style="color:#6b7280;">recebido ${GF.qty(r.quantidade_atendida)}</small>` : ''}</td>
+        <td>x${GF.qty(r.quantidade_pedida)}${r.quantidade_atendida ? `<br><small style="color:var(--text-muted);">recebido ${GF.qty(r.quantidade_atendida)}</small>` : ''}</td>
         <td>${esc(r.unidade)}</td>
         <td><strong>R$ ${Number(r.valor_total).toFixed(2)}</strong></td>
         <td><small>${esc(r.data_pedido)}</small></td><td><small>${esc(r.previsao_entrega)}</small></td>
@@ -44,7 +44,7 @@
         <td>${aberta ? `
           ${GF.can('requisicoes:receber') ? `<button class="btn-icon btn-action-accept" data-act="receber" title="Confirmar e Receber Mercadoria (Entrada no Estoque)" aria-label="Receber ${esc(r.codigo_pedido)}">${GF.icon('check')}</button>` : ''}
           ${avancar ? `<button class="btn-icon btn-action-next" data-act="avancar" title="${r.situacao === 'Em Aberto' ? 'Marcar como cotado' : 'Gerar AF'}" aria-label="Avançar ${esc(r.codigo_pedido)}">${GF.icon('arrow-right')}</button>` : ''}
-          ${GF.can('requisicoes:cancelar') ? `<button class="btn-icon btn-action-cancel" data-act="cancelar" title="Cancelar Requisição" aria-label="Cancelar ${esc(r.codigo_pedido)}">${GF.icon('x')}</button>` : ''}` : '<span style="font-size:0.75rem; color:#6b7280;">Concluído</span>'}
+          ${GF.can('requisicoes:cancelar') ? `<button class="btn-icon btn-action-cancel" data-act="cancelar" title="Cancelar Requisição" aria-label="Cancelar ${esc(r.codigo_pedido)}">${GF.icon('x')}</button>` : ''}` : '<span style="font-size:0.75rem; color:var(--text-muted);">Concluído</span>'}
         </td></tr>`;
     }).join('') : '<tr><td colspan="10" style="text-align:center; padding:16px;">Nenhuma requisição encontrada.</td></tr>';
     showcase(reqs.find(r => r.id_requisicao === selecionada) || null);
