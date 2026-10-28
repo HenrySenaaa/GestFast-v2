@@ -637,3 +637,56 @@ test('Pedido em massa: vários itens num pedido só, tudo ou nada, e pedidos pre
   assert.equal((await a.del(`/api/order-templates/${idm}`)).status, 200);
   assert.equal((await a.del(`/api/order-templates/${idm}`)).status, 404);
 });
+
+test('Pagamento misto: partes somam o total, troco só da parte em dinheiro, relatório e edição acompanham', async () => {
+  const a = await admin();
+  const total = 2 * 18.90; // 2 cafés
+  const corpo = extra => ({ itens: [{ id_produto: 2, quantidade: 2 }], forma_pagamento: 'Misto', ...extra });
+
+  // validações: nada é gravado
+  const s2 = await saldo(2);
+  assert.equal((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: total }] }))).status, 400);
+  assert.match((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: 20 }, { forma_pagamento: 'Dinheiro', valor: 10 }] }))).error, /soma das formas/);
+  assert.equal((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: 20 }, { forma_pagamento: 'PIX', valor: 17.8 }] }))).status, 400);
+  assert.equal((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'Cheque', valor: 20 }, { forma_pagamento: 'PIX', valor: 17.8 }] }))).status, 400);
+  assert.match((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: 20 }, { forma_pagamento: 'Dinheiro', valor: 17.8 }], valor_recebido: 10 }))).error, /parte em dinheiro/);
+  assert.equal(await saldo(2), s2);
+
+  const r = await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: 20 }, { forma_pagamento: 'Dinheiro', valor: 7.8 }, { forma_pagamento: 'Cartão Débito', valor: 10 }], valor_recebido: 10 }));
+  assert.equal(r.status, 201, r.error);
+  const v = r.sale;
+  assert.equal(v.forma_pagamento, 'Misto'); assert.equal(v.valor_total, 37.8);
+  assert.equal(v.troco, 2.2); assert.equal(v.valor_recebido, 10);
+  assert.deepEqual(v.pagamentos.map(p => [p.forma_pagamento, p.valor]), [['PIX', 20], ['Dinheiro', 7.8], ['Cartão Débito', 10]]);
+  assert.ok(v.pagamentos.find(p => p.forma_pagamento === 'Cartão Débito').nsu); // cartão autorizado com NSU próprio
+  assert.equal(await saldo(2), s2 - 2);
+
+  // forma única continua igual e também traz a lista de pagamentos
+  const u = (await a.post('/api/sales', { itens: [{ id_produto: 2, quantidade: 1 }], forma_pagamento: 'PIX' })).sale;
+  assert.deepEqual(u.pagamentos.map(p => [p.forma_pagamento, p.valor]), [['PIX', 18.9]]);
+
+  // histórico e busca por forma de pagamento
+  const hist = await a.get(`/api/sales?q=${encodeURIComponent('Débito')}&limit=50`);
+  assert.ok(hist.sales.some(s => s.id_venda === v.id_venda && s.pagamentos.length === 3));
+
+  // relatório: a venda mista entra em cada forma pela sua parte
+  const hoje = db.util.dataISO();
+  const antes = (await a.get(`/api/reports/sales?from=${hoje}&to=${hoje}`)).report;
+  const t = antes.transacoes.find(x => x.id_venda === v.id_venda);
+  assert.equal(t.forma_pagamento, 'Misto (PIX + Dinheiro + Cartão Débito)');
+  assert.equal(Math.round(antes.porPagamento.reduce((s, p) => s + p.total, 0) * 100) / 100, antes.totalGeral);
+
+  // editar a venda: as partes acompanham o novo total na mesma proporção
+  const ed = await a.put(`/api/sales/${v.id_venda}`, { itens: [{ id_produto: 2, quantidade: 1 }] });
+  assert.equal(ed.status, 200, ed.error);
+  assert.equal(ed.sale.valor_total, 18.9);
+  assert.equal(Math.round(ed.sale.pagamentos.reduce((s, p) => s + p.valor, 0) * 100) / 100, 18.9);
+  assert.deepEqual(ed.sale.pagamentos.map(p => p.valor), [10, 3.9, 5]);
+
+  // cancelar e excluir funcionam com o pagamento misto (as partes saem junto)
+  const can = await a.post(`/api/sales/${v.id_venda}/cancel`, { motivo: 'Cliente desistiu da compra', autorizador_email: 'proprietario@padarianovayork.com', autorizador_senha: 'admin123' });
+  assert.equal(can.status, 200, can.error);
+  assert.equal((await a.del(`/api/sales/${v.id_venda}`, { autorizador_email: 'proprietario@padarianovayork.com', autorizador_senha: 'admin123' })).status, 200);
+  const [[{ n }]] = await db.pool.query('SELECT COUNT(*) AS n FROM venda_pagamento WHERE id_venda = ?', [v.id_venda]);
+  assert.equal(Number(n), 0);
+});

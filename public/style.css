@@ -597,6 +597,9 @@ button.kpi-card:hover { border-color: var(--brand); box-shadow: var(--shadow-md)
 .venda-picker-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .picker-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .picker-col .venda-picker-label { margin-top: 6px; }
+.pdv-misto { display: flex; flex-direction: column; gap: 6px; }
+.pdv-misto-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.pdv-misto-grid label { display: flex; flex-direction: column; gap: 4px; margin-top: 0; }
 .desc-inline { display: grid; grid-template-columns: 1fr 64px; gap: 6px; }
 .stock-live-badge {
   height: 40px; border-radius: var(--radius-sm); display: flex; align-items: center; padding: 0 12px; font-weight: 700; font-variant-numeric: tabular-nums;

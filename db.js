@@ -74,7 +74,10 @@ const SITUACOES_ABERTAS = ['Em Aberto', 'Cotado', 'AF Gerada'];
 const MOTIVOS_PERDA = ['Vencido', 'Quebra/Avaria', 'Sobra do dia', 'Outro'];
 const TIPOS_PRODUTO = ['Revenda', 'Produção', 'Insumo']; // Insumo não é vendido no caixa
 const ORIGENS_MOV = ['manual', 'venda', 'requisicao', 'conferencia', 'estorno', 'ajuste', 'perda', 'producao'];
-const ORIGENS_AJUSTE = ['manual', 'ajuste', 'conferencia', 'estorno']; // mexidas à mão: o que a auditoria olha primeiro
+// Mexidas à mão que a auditoria olha primeiro. Entrada manual não conta: é o recebimento de mercadoria sem requisição.
+const ORIGENS_AJUSTE = ['ajuste', 'conferencia', 'estorno'];
+const ehAjuste = (origem, tipo) => ORIGENS_AJUSTE.includes(origem) || (origem === 'manual' && tipo === 'Saída');
+const SQL_EH_AJUSTE = "(origem IN ('ajuste', 'conferencia', 'estorno') OR (origem = 'manual' AND tipo_movimentacao = 'Saída'))";
 
 // ------------------------------------------------------------------ consultas e conversões de linhas
 const SQL_USUARIO = 'SELECT u.*, p.nome_perfil FROM usuario u JOIN perfil p ON p.id_perfil = u.id_perfil';
@@ -101,11 +104,13 @@ const SQL_VENDA = `SELECT v.*, u.nome AS usuario_nome, uc.nome AS cancelada_por_
   LEFT JOIN usuario ua ON ua.id_usuario = v.autorizada_por
   LEFT JOIN usuario ue ON ue.id_usuario = v.editada_por`;
 
-function mapVenda(v, itens) {
+// `pagamentos`: as partes de uma venda 'Misto'; numa venda de forma única, uma parte com o total.
+function mapVenda(v, itens, partes) {
   const o = {
     id_venda: v.id_venda, codigo_venda: v.codigo_venda, data_venda: hm(v.data_venda), valor_subtotal: v.valor_subtotal,
     desconto: v.desconto, desconto_tipo: v.desconto_tipo, desconto_informado: v.desconto_informado, valor_total: v.valor_total,
     forma_pagamento: v.forma_pagamento, valor_recebido: v.valor_recebido, troco: v.troco, nsu: v.nsu,
+    pagamentos: v.forma_pagamento === 'Misto' ? (partes || []) : [{ forma_pagamento: v.forma_pagamento, valor: v.valor_total, nsu: v.nsu }],
     status_venda: v.status_venda, id_usuario: v.id_usuario, usuario_nome: v.usuario_nome, itens
   };
   if (v.status_venda === 'Cancelada') {
@@ -1018,11 +1023,22 @@ class Database {
     return mapa;
   }
 
+  // Partes do pagamento das vendas 'Misto' (as de forma única não têm linhas em venda_pagamento).
+  async pagamentosDasVendas(vendas, c = pool) {
+    const ids = vendas.filter(v => v.forma_pagamento === 'Misto').map(v => v.id_venda);
+    const mapa = new Map(ids.map(id => [id, []]));
+    if (!ids.length) return mapa;
+    const [rows] = await c.query(
+      'SELECT id_venda, forma_pagamento, valor, nsu FROM venda_pagamento WHERE id_venda IN (?) ORDER BY id_venda_pagamento', [ids]);
+    rows.forEach(({ id_venda, ...p }) => mapa.get(id_venda).push(p));
+    return mapa;
+  }
+
   async getVenda(id, c = pool, lock = false) {
     const [rows] = await c.query(`${SQL_VENDA} WHERE v.id_venda = ?${lock ? ' FOR UPDATE' : ''}`, [idNum(id)]);
     if (!rows[0]) return undefined;
-    const itens = await this.itensDasVendas([rows[0].id_venda], c);
-    return mapVenda(rows[0], itens.get(rows[0].id_venda));
+    const [itens, partes] = await Promise.all([this.itensDasVendas([rows[0].id_venda], c), this.pagamentosDasVendas(rows, c)]);
+    return mapVenda(rows[0], itens.get(rows[0].id_venda), partes.get(rows[0].id_venda));
   }
 
   // O filtro usa só colunas de `venda`: vendedor e produto viram subconsultas não correlacionadas
@@ -1035,9 +1051,10 @@ class Database {
     if (txt(q)) {
       const t = like(txt(q));
       where.push(`(v.codigo_venda LIKE ? OR v.forma_pagamento LIKE ?
+        OR v.id_venda IN (SELECT vp.id_venda FROM venda_pagamento vp WHERE vp.forma_pagamento LIKE ?)
         OR v.id_usuario IN (SELECT id_usuario FROM usuario WHERE nome LIKE ?)
         OR v.id_venda IN (SELECT i.id_venda FROM item_venda i JOIN produto p ON p.id_produto = i.id_produto WHERE p.nome_produto LIKE ?))`);
-      params.push(t, t, t, t);
+      params.push(t, t, t, t, t);
     }
     return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', params };
   }
@@ -1046,8 +1063,8 @@ class Database {
   async getVendas({ from, to, q, status, limite, offset } = {}) {
     const f = this.filtroVendas({ from, to, q, status });
     const [rows] = await pool.query(listagem(SQL_VENDA, 'venda v', f.sql, 'v.id_venda DESC', paginar(limite, offset)), f.params);
-    const itens = await this.itensDasVendas(rows.map(v => v.id_venda));
-    return rows.map(v => mapVenda(v, itens.get(v.id_venda)));
+    const [itens, partes] = await Promise.all([this.itensDasVendas(rows.map(v => v.id_venda)), this.pagamentosDasVendas(rows)]);
+    return rows.map(v => mapVenda(v, itens.get(v.id_venda), partes.get(v.id_venda)));
   }
 
   // Total de vendas e faturamento (só as concluídas) de TODO o filtro, para o resumo da tela.
@@ -1069,7 +1086,8 @@ class Database {
       const itens = Array.isArray(data.itens) ? data.itens : [];
       if (!itens.length) throw erro('Nenhum item inserido na venda.');
       const forma = data.forma_pagamento || 'Dinheiro';
-      if (!FORMAS_PAGAMENTO.includes(forma)) throw erro('Forma de pagamento inválida.');
+      const misto = forma === 'Misto';
+      if (!misto && !FORMAS_PAGAMENTO.includes(forma)) throw erro('Forma de pagamento inválida.');
       const cfg = await this.getSettings(c);
 
       const produtos = new Map();
@@ -1108,13 +1126,21 @@ class Database {
       const desc = this.resolverDesconto(subtotal, data, ator, cfg);
       const total = r2(subtotal - desc.valor);
 
-      let recebido = null, troco = null;
-      if (forma === 'Dinheiro' && data.valor_recebido !== undefined && data.valor_recebido !== '' && data.valor_recebido !== null) {
-        recebido = Number(data.valor_recebido);
-        if (!Number.isFinite(recebido) || recebido < total) throw erro('O valor recebido é menor que o total da venda.');
-        troco = r2(recebido - total);
+      const temRecebido = data.valor_recebido !== undefined && data.valor_recebido !== '' && data.valor_recebido !== null;
+      let recebido = null, troco = null, partes = null, nsu = null;
+      if (misto) {
+        // Cada parte de cartão é autorizada separadamente; o troco sai só da parte em dinheiro.
+        ({ partes, recebido, troco } = this.validarPagamentoMisto(data.pagamentos, total, temRecebido ? data.valor_recebido : null));
+        for (const p of partes) p.nsu = p.forma_pagamento.startsWith('Cartão') ? gateways.autorizarPagamento(p.forma_pagamento, p.valor, cfg).nsu : null;
+      } else {
+        if (forma === 'Dinheiro' && temRecebido) {
+          recebido = Number(data.valor_recebido);
+          if (!Number.isFinite(recebido) || recebido < total) throw erro('O valor recebido é menor que o total da venda.');
+          troco = r2(recebido - total);
+        }
+        const aut = gateways.autorizarPagamento(forma, total, cfg);
+        if (forma.startsWith('Cartão')) nsu = aut.nsu;
       }
-      const aut = gateways.autorizarPagamento(forma, total, cfg);
 
       // Código provisório; depois vira VENDA-(1000 + id), como na versão anterior.
       const [r] = await c.query(
@@ -1122,11 +1148,15 @@ class Database {
            forma_pagamento, valor_recebido, troco, nsu, status_venda, id_usuario)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Concluída', ?)`,
         [`TMP-${auth.newToken().slice(0, 12)}`, dataHora(), subtotal, desc.valor, desc.tipo, Number(data.desconto) || 0, total, forma,
-          recebido, troco, forma.startsWith('Cartão') ? aut.nsu : null, ator.id_usuario]
+          recebido, troco, nsu, ator.id_usuario]
       );
       const codigo = `VENDA-${1000 + r.insertId}`;
       await c.query('UPDATE venda SET codigo_venda = ? WHERE id_venda = ?', [codigo, r.insertId]);
       await this.gravarItensVenda(c, r.insertId, itensProc);
+      if (partes) {
+        await c.query('INSERT INTO venda_pagamento (id_venda, forma_pagamento, valor, nsu) VALUES ?',
+          [partes.map(p => [r.insertId, p.forma_pagamento, p.valor, p.nsu])]);
+      }
 
       for (const [idp, q] of totalPorProduto) {
         const p = produtos.get(idp);
@@ -1137,6 +1167,33 @@ class Database {
       }
       return this.getVenda(r.insertId, c);
     });
+  }
+
+  // Pagamento misto: duas formas ou mais, sem repetir, cada uma com valor > 0 e somando exatamente o total.
+  // `recebido` (opcional) é o dinheiro entregue pelo cliente: precisa cobrir a parte em dinheiro.
+  validarPagamentoMisto(pagamentos, total, recebidoInformado) {
+    const lista = Array.isArray(pagamentos) ? pagamentos : [];
+    if (lista.length < 2) throw erro('No pagamento misto, informe ao menos duas formas de pagamento.');
+    const vistas = new Set();
+    const partes = lista.map(p => {
+      const forma = p && p.forma_pagamento;
+      if (!FORMAS_PAGAMENTO.includes(forma)) throw erro('Forma de pagamento inválida no pagamento misto.');
+      if (vistas.has(forma)) throw erro(`A forma "${forma}" aparece mais de uma vez no pagamento misto.`);
+      vistas.add(forma);
+      const valor = Number(p.valor);
+      if (!Number.isFinite(valor) || valor <= 0) throw erro(`Informe um valor maior que zero para "${forma}".`);
+      return { forma_pagamento: forma, valor: r2(valor) };
+    });
+    const soma = r2(partes.reduce((s, p) => s + p.valor, 0));
+    if (soma !== r2(total)) throw erro(`A soma das formas de pagamento (R$ ${soma.toFixed(2)}) deve ser igual ao total da venda (R$ ${r2(total).toFixed(2)}).`);
+    const dinheiro = partes.find(p => p.forma_pagamento === 'Dinheiro');
+    let recebido = null, troco = null;
+    if (dinheiro && recebidoInformado !== null) {
+      recebido = Number(recebidoInformado);
+      if (!Number.isFinite(recebido) || recebido < dinheiro.valor) throw erro('O valor recebido em dinheiro é menor que a parte em dinheiro.');
+      troco = r2(recebido - dinheiro.valor);
+    }
+    return { partes, recebido, troco };
   }
 
   async estornarItensVenda(c, venda, ator, motivo) {
@@ -1210,8 +1267,21 @@ class Database {
       const desc = this.resolverDesconto(subtotal, { desconto_tipo: venda.desconto_tipo, desconto: venda.desconto_tipo === 'percentual' ? venda.desconto_informado : Math.min(venda.desconto, subtotal) }, ator, await this.getSettings(c));
       await c.query('DELETE FROM item_venda WHERE id_venda = ?', [venda.id_venda]);
       await this.gravarItensVenda(c, venda.id_venda, itensNovos);
+      const novoTotal = r2(subtotal - desc.valor);
       await c.query('UPDATE venda SET valor_subtotal = ?, desconto = ?, valor_total = ?, editada_por = ?, data_edicao = ? WHERE id_venda = ?',
-        [subtotal, desc.valor, r2(subtotal - desc.valor), ator.id_usuario, dataHora(), venda.id_venda]);
+        [subtotal, desc.valor, novoTotal, ator.id_usuario, dataHora(), venda.id_venda]);
+      // Pagamento misto: as partes acompanham o novo total na mesma proporção (a última fica com o arredondamento).
+      if (venda.forma_pagamento === 'Misto' && novoTotal !== venda.valor_total) {
+        if (novoTotal <= 0) throw erro('Uma venda com pagamento misto não pode ficar com total zero. Para anulá-la, use o cancelamento.');
+        const partes = venda.pagamentos;
+        let resto = novoTotal;
+        for (let i = 0; i < partes.length; i++) {
+          const valor = i === partes.length - 1 ? r2(resto) : r2(partes[i].valor * novoTotal / venda.valor_total);
+          resto = r2(resto - valor);
+          if (valor <= 0) throw erro('Com o novo total, uma das partes do pagamento misto ficaria zerada. Cancele a venda e lance de novo.');
+          await c.query('UPDATE venda_pagamento SET valor = ? WHERE id_venda = ? AND forma_pagamento = ?', [valor, venda.id_venda, partes[i].forma_pagamento]);
+        }
+      }
       return this.getVenda(venda.id_venda, c);
     });
   }
@@ -1301,7 +1371,7 @@ class Database {
       pool.query(`SELECT i.id_produto, i.divergencia FROM item_conferencia i
         JOIN (SELECT id_produto, MAX(id_item_conferencia) AS id FROM item_conferencia GROUP BY id_produto) u ON u.id = i.id_item_conferencia`),
       pool.query(`SELECT id_produto, COUNT(*) AS n, COALESCE(SUM(quantidade * valor_unitario), 0) AS valor FROM movimentacao_estoque
-        WHERE origem IN (?) AND data_movimentacao >= ? GROUP BY id_produto`, [ORIGENS_AJUSTE, desde])
+        WHERE ${SQL_EH_AJUSTE} AND data_movimentacao >= ? GROUP BY id_produto`, [desde])
     ]);
     const confDe = new Map(confs.map(c => [c.id_produto, c]));
     const divDe = new Map(ultimas.map(u => [u.id_produto, u.divergencia]));
@@ -1359,7 +1429,7 @@ class Database {
     const movimentos = rows.map(r => {
       const m = mapMov(r);
       const antes = r3(saldo - (m.tipo_movimentacao === 'Entrada' ? m.quantidade : -m.quantidade));
-      const linha = { ...m, saldo_antes: antes, saldo_depois: saldo, atencao: ORIGENS_AJUSTE.includes(m.origem) };
+      const linha = { ...m, saldo_antes: antes, saldo_depois: saldo, atencao: ehAjuste(m.origem, m.tipo_movimentacao) };
       saldo = antes;
       return linha;
     });
@@ -1390,15 +1460,20 @@ class Database {
     const filtro = where.join(' AND ');
     // Três leituras enxutas em paralelo (cabeçalhos, itens só com números e catálogo); o resto é somado
     // aqui com Map. Medido no teste de carga: é mais rápido que agrupar com GROUP_CONCAT no MySQL.
-    const [[vendas], [itens], [prods]] = await Promise.all([
+    const [[vendas], [itens], [prods], [partes]] = await Promise.all([
       pool.query(
         `SELECT v.id_venda, v.codigo_venda, v.data_venda, v.forma_pagamento, v.valor_subtotal, v.valor_total, u.nome AS usuario_nome
          FROM venda v JOIN usuario u ON u.id_usuario = v.id_usuario WHERE ${filtro} ORDER BY v.id_venda DESC`, params),
       pool.query(
         `SELECT i.id_item_venda, i.id_venda, i.id_produto, i.quantidade, i.subtotal
          FROM venda v JOIN item_venda i ON i.id_venda = v.id_venda WHERE ${filtro}`, params),
-      pool.query('SELECT p.id_produto, p.nome_produto, p.unidade, p.id_categoria, c.nome_categoria FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria')
+      pool.query('SELECT p.id_produto, p.nome_produto, p.unidade, p.id_categoria, c.nome_categoria FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria'),
+      pool.query(
+        `SELECT vp.id_venda, vp.forma_pagamento, vp.valor FROM venda v JOIN venda_pagamento vp ON vp.id_venda = v.id_venda
+         WHERE ${filtro} ORDER BY vp.id_venda_pagamento`, params)
     ]);
+    const partesDe = new Map();
+    for (const p of partes) { const l = partesDe.get(p.id_venda); if (l) l.push(p); else partesDe.set(p.id_venda, [p]); }
     const catDe = new Map(prods.map(p => [p.id_produto, p]));
     const itensDe = new Map();
     for (const i of itens) {
@@ -1430,10 +1505,20 @@ class Database {
       }
       const liq = r2(sub * razao);
       bruto = r2(bruto + sub); liquido = r2(liquido + liq); descontos = r2(descontos + (sub - liq));
-      const pg = pagamentos.get(v.forma_pagamento) || { forma: v.forma_pagamento, total: 0, quantidade: 0 };
-      pg.total = r2(pg.total + liq); pg.quantidade++;
-      pagamentos.set(v.forma_pagamento, pg);
-      transacoes.push({ id_venda: v.id_venda, codigo_venda: v.codigo_venda, data_venda: hm(v.data_venda), usuario_nome: v.usuario_nome, forma_pagamento: v.forma_pagamento, itens_resumo: resumo.join(', '), bruto: r2(sub), desconto: r2(sub - liq), valor_total: liq });
+      // Pagamento misto: o valor da venda entra em cada forma na proporção das partes (a última fica com o arredondamento).
+      const pv = partesDe.get(v.id_venda);
+      const fatias = pv ? pv.map(p => ({ forma: p.forma_pagamento, peso: p.valor })) : [{ forma: v.forma_pagamento, peso: 1 }];
+      const pesoTotal = fatias.reduce((s, f) => s + f.peso, 0);
+      let resto = liq;
+      fatias.forEach((f, ix) => {
+        const valor = ix === fatias.length - 1 ? r2(resto) : r2(liq * f.peso / pesoTotal);
+        resto = r2(resto - valor);
+        const pg = pagamentos.get(f.forma) || { forma: f.forma, total: 0, quantidade: 0 };
+        pg.total = r2(pg.total + valor); pg.quantidade++;
+        pagamentos.set(f.forma, pg);
+      });
+      const formaTxt = pv ? `Misto (${pv.map(p => p.forma_pagamento).join(' + ')})` : v.forma_pagamento;
+      transacoes.push({ id_venda: v.id_venda, codigo_venda: v.codigo_venda, data_venda: hm(v.data_venda), usuario_nome: v.usuario_nome, forma_pagamento: formaTxt, itens_resumo: resumo.join(', '), bruto: r2(sub), desconto: r2(sub - liq), valor_total: liq });
     }
     const itensVendidos = [...mapa.values()].map(i => ({ ...i, valor_unitario: i.quantidade ? r2(i.total / i.quantidade) : 0 })).sort((a, b) => b.total - a.total);
     return {

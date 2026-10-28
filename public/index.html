@@ -288,7 +288,7 @@
         <div class="figma-tab-header">
           <div>
             <div class="figma-tab-title-pill">Auditoria do Estoque</div>
-            <p class="page-sub">O que conferir primeiro: produtos nunca conferidos, com divergência na última contagem ou com muitos ajustes à mão.</p>
+            <p class="page-sub">O que conferir primeiro: produtos nunca conferidos, com divergência na última contagem ou com muitos ajustes à mão (saída manual, ajuste de venda ou de conferência, estorno).</p>
           </div>
           <label class="inline-field">Ajustes dos últimos
             <select id="aud-dias" class="select-field" aria-label="Período dos ajustes"><option value="7">7 dias</option><option value="30" selected>30 dias</option><option value="90">90 dias</option></select>
@@ -626,6 +626,7 @@
                   <select id="pdv-forma-pagamento" class="figma-select-dark" aria-label="Forma de Pagamento">
                     <option value="Dinheiro">Dinheiro</option><option value="Cartão Débito">Cartão Débito</option>
                     <option value="Cartão Crédito">Cartão Crédito</option><option value="PIX">PIX</option>
+                    <option value="Misto">Dividir (misto)</option>
                   </select>
                 </div>
                 <div class="picker-col">
@@ -635,6 +636,17 @@
                     <select id="pdv-desconto-tipo" class="figma-select-dark" aria-label="Tipo de desconto"><option value="valor">R$</option><option value="percentual">%</option></select>
                   </div>
                 </div>
+              </div>
+
+              <div class="pdv-misto is-hidden" id="pdv-misto" aria-label="Pagamento dividido entre formas">
+                <span class="venda-picker-label">Dividir o pagamento (R$):</span>
+                <div class="pdv-misto-grid">
+                  <label class="venda-picker-label">Dinheiro <input type="number" class="figma-input-dark pdv-parte" data-forma="Dinheiro" min="0" step="0.01" placeholder="0,00"></label>
+                  <label class="venda-picker-label">PIX <input type="number" class="figma-input-dark pdv-parte" data-forma="PIX" min="0" step="0.01" placeholder="0,00"></label>
+                  <label class="venda-picker-label">Débito <input type="number" class="figma-input-dark pdv-parte" data-forma="Cartão Débito" min="0" step="0.01" placeholder="0,00"></label>
+                  <label class="venda-picker-label">Crédito <input type="number" class="figma-input-dark pdv-parte" data-forma="Cartão Crédito" min="0" step="0.01" placeholder="0,00"></label>
+                </div>
+                <div id="pdv-misto-falta" class="stock-live-badge" aria-live="polite">--</div>
               </div>
 
               <div class="venda-picker-row" id="pdv-recebido-row">
