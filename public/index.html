@@ -170,6 +170,7 @@
         <a href="#estoque" class="nav-item" data-view="estoque" data-perm="estoque:conferir" title="Verificar Estoque"><svg class="nav-ico" aria-hidden="true"><use href="#i-box"/></svg><span class="nav-text">Verificar Estoque</span></a>
         <a href="#entradas" class="nav-item" data-view="entradas" data-perm="movimentos:ver" title="Entrada de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-in"/></svg><span class="nav-text">Entrada de Produtos</span></a>
         <a href="#saidas" class="nav-item" data-view="saidas" data-perm="movimentos:ver" title="Saída de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-out"/></svg><span class="nav-text">Saída de Produtos</span></a>
+        <a href="#vendas-saidas" class="nav-item" data-view="vendas-saidas" data-perm="movimentos:ver" title="Vendas e Saídas"><svg class="nav-ico" aria-hidden="true"><use href="#i-history"/></svg><span class="nav-text">Vendas e Saídas</span></a>
         <a href="#requisicoes" class="nav-item" data-view="requisicoes" data-perm="requisicoes:ver" title="Requisição"><svg class="nav-ico" aria-hidden="true"><use href="#i-clipboard"/></svg><span class="nav-text">Requisição</span></a>
         <a href="#cadastro" class="nav-item" data-view="cadastro" data-perm="produtos:editar" title="Cadastro de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-tag"/></svg><span class="nav-text">Cadastro de Produtos</span></a>
         <div class="nav-group-label">Produção</div>
@@ -445,6 +446,42 @@
             </table>
           </div>
           <div class="pager" id="saidas-pager"></div>
+        </div>
+      </section>
+
+      <!-- 5b. VENDAS E SAÍDAS (tudo o que saiu do estoque, numa lista só) -->
+      <section id="view-vendas-saidas" class="app-view">
+        <div class="figma-tab-header">
+          <div>
+            <div class="figma-tab-title-pill">Vendas e Saídas</div>
+            <p class="page-sub">Tudo o que saiu do estoque numa lista só: vendas, perdas, consumo da produção, saídas manuais e ajustes.</p>
+          </div>
+          <div class="tab-header-actions">
+            <button class="btn btn-secondary" id="vs-pdf" type="button"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg> PDF</button>
+            <button class="btn btn-secondary" id="vs-excel" type="button"><svg class="icon" aria-hidden="true"><use href="#i-sheet"/></svg> Excel</button>
+          </div>
+        </div>
+        <div class="figma-card full-panel">
+          <div class="filter-toolbar">
+            <label class="inline-field">De <input type="date" id="vs-de" class="select-field"></label>
+            <label class="inline-field">Até <input type="date" id="vs-ate" class="select-field"></label>
+            <select id="vs-origem" class="select-field" aria-label="Filtrar por tipo de saída">
+              <option value="">Todos os tipos</option><option value="venda">Venda</option><option value="perda">Perda / sobra</option>
+              <option value="producao">Consumo na produção</option><option value="manual">Saída manual</option>
+              <option value="ajuste">Ajuste de venda</option><option value="conferencia">Ajuste de conferência</option><option value="estorno">Estorno</option>
+            </select>
+            <select id="vs-produto" class="select-field" aria-label="Filtrar por produto"><option value="">Todos os produtos</option></select>
+            <button class="btn btn-sm btn-secondary" id="vs-limpar">Limpar filtros</button>
+            <span class="toolbar-hint" id="vs-resumo"></span>
+          </div>
+          <div class="rel-pagamentos vs-origens" id="vs-origens"></div>
+          <div class="table-responsive">
+            <table class="figma-styled-table">
+              <thead><tr><th>Data</th><th>Tipo</th><th>Produto</th><th>Quant</th><th>Unidade R$</th><th>Total R$</th><th>Responsável</th><th>Observação</th></tr></thead>
+              <tbody id="vs-tabela-corpo"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="vs-pager"></div>
         </div>
       </section>
 

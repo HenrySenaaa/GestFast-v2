@@ -64,6 +64,7 @@ const FORMAS_PAGAMENTO = ['Dinheiro', 'Cartão Débito', 'Cartão Crédito', 'PI
 const SITUACOES_ABERTAS = ['Em Aberto', 'Cotado', 'AF Gerada'];
 const MOTIVOS_PERDA = ['Vencido', 'Quebra/Avaria', 'Sobra do dia', 'Outro'];
 const TIPOS_PRODUTO = ['Revenda', 'Produção', 'Insumo']; // Insumo não é vendido no caixa
+const ORIGENS_MOV = ['manual', 'venda', 'requisicao', 'conferencia', 'estorno', 'ajuste', 'perda', 'producao'];
 
 // ------------------------------------------------------------------ consultas e conversões de linhas
 const SQL_USUARIO = 'SELECT u.*, p.nome_perfil FROM usuario u JOIN perfil p ON p.id_perfil = u.id_perfil';
@@ -816,19 +817,34 @@ class Database {
     return movs;
   }
 
-  filtroMovimentacoes({ tipo, from, to }) {
+  // `origem` e `id_produto` alimentam a tela Vendas e Saídas (todas as saídas numa lista só).
+  filtroMovimentacoes({ tipo, from, to, origem, id_produto }) {
     const where = [], params = [];
     if (tipo) { where.push('m.tipo_movimentacao = ?'); params.push(tipo); }
     if (from) { where.push('m.data_movimentacao >= ?'); params.push(`${from} 00:00:00`); }
     if (to) { where.push('m.data_movimentacao <= ?'); params.push(`${to} 23:59:59`); }
+    if (origem) {
+      if (!ORIGENS_MOV.includes(origem)) throw erro('Origem de movimentação inválida.');
+      where.push('m.origem = ?'); params.push(origem);
+    }
+    if (id_produto) { where.push('m.id_produto = ?'); params.push(idNum(id_produto)); }
     return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', params };
   }
 
   // Sem `limite` devolve tudo (como antes); com `limite`/`offset` devolve só a página pedida.
-  async getMovimentacoes({ tipo, from, to, limite, offset } = {}) {
-    const f = this.filtroMovimentacoes({ tipo, from, to });
+  async getMovimentacoes({ tipo, from, to, origem, id_produto, limite, offset } = {}) {
+    const f = this.filtroMovimentacoes({ tipo, from, to, origem, id_produto });
     const [rows] = await pool.query(listagem(SQL_MOV, 'movimentacao_estoque m', f.sql, 'm.id_movimentacao DESC', paginar(limite, offset)), f.params);
     return rows.map(mapMov);
+  }
+
+  // Quantos registros e quanto em R$ saiu por origem (venda, perda, produção...), no filtro inteiro.
+  async resumoPorOrigem(filtros = {}) {
+    const f = this.filtroMovimentacoes(filtros);
+    const [rows] = await pool.query(
+      `SELECT m.origem, COUNT(*) AS n, COALESCE(SUM(m.quantidade * m.valor_unitario), 0) AS valor
+       FROM movimentacao_estoque m${f.sql} GROUP BY m.origem ORDER BY valor DESC`, f.params);
+    return rows.map(r => ({ origem: r.origem, registros: Number(r.n), valor: r2(r.valor) }));
   }
 
   // Total de registros e valor somado de TODO o filtro (não só da página), para o resumo da tela.

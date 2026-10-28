@@ -145,8 +145,42 @@
     } catch (err) { /* toast exibido; nada foi gravado */ } finally { btn.disabled = false; }
   }
 
+  // ---- Vendas e Saídas: todas as saídas (venda, perda, produção, manual, ajustes) com filtro por tipo e produto.
+  const BADGE_ORIGEM = { venda: 'badge-success', perda: 'badge-warning', conferencia: 'badge-urgent', ajuste: 'badge-urgent' };
+  const filtroVS = () => [$('#vs-de').value && `from=${$('#vs-de').value}`, $('#vs-ate').value && `to=${$('#vs-ate').value}`,
+    $('#vs-origem').value && `origem=${$('#vs-origem').value}`, $('#vs-produto').value && `id_produto=${$('#vs-produto').value}`].filter(Boolean);
+
+  async function carregarVS(offset = 0) {
+    if (typeof offset !== 'number') offset = 0; // chamado direto por eventos
+    const q = ['tipo=Saída', ...filtroVS(), 'resumo=1', `limit=${GF.POR_PAGINA}`, `offset=${offset}`].join('&');
+    try {
+      const r = await GF.get(`/api/movements?${q}`);
+      $('#vs-resumo').textContent = `${r.total.toLocaleString('pt-BR')} registro(s) • total ${GF.money(r.valorTotal)}`;
+      $('#vs-origens').innerHTML = r.porOrigem.map(o => `<span>${esc(GF.origem(o.origem, 'Saída'))}: <strong>${GF.money(o.valor)}</strong> (${o.registros})</span>`).join('');
+      GF.pager($('#vs-pager'), { total: r.total, offset, ir: carregarVS });
+      $('#vs-tabela-corpo').innerHTML = r.movements.length ? r.movements.map(m => `<tr>
+        <td>${GF.date(m.data_movimentacao)}</td>
+        <td><span class="badge-status-pill ${BADGE_ORIGEM[m.origem] || 'badge-info'}">${esc(GF.origem(m.origem, 'Saída'))}${m.motivo_perda ? `: ${esc(m.motivo_perda)}` : ''}</span></td>
+        <td>${esc(m.produto_nome)}</td><td>${GF.qty(m.quantidade)} ${esc(m.unidade)}</td><td>${GF.num2(m.valor_unitario)}</td><td>${GF.num2(m.valor_total)}</td>
+        <td>${esc(m.usuario_nome)}</td><td>${esc(m.observacao)}</td></tr>`).join('') : '<tr><td colspan="8" class="empty-cell">Nenhuma saída encontrada para os filtros informados.</td></tr>';
+    } catch (e) { $('#vs-tabela-corpo').innerHTML = '<tr><td colspan="8" class="empty-cell">Falha ao carregar as saídas.</td></tr>'; $('#vs-pager').innerHTML = ''; }
+  }
+
+  async function abrirVS() {
+    const sel = $('#vs-produto');
+    if (sel.options.length <= 1) {
+      try {
+        const ps = (await GF.get('/api/products?status=todos')).products;
+        sel.innerHTML = '<option value="">Todos os produtos</option>' + ps.map(p => `<option value="${p.id_produto}">${esc(p.nome_produto)}</option>`).join('');
+      } catch (e) { /* filtro por produto fica indisponível */ }
+    }
+    if (!$('#vs-de').value && !$('#vs-ate').value) { await GF.syncToday(); $('#vs-de').value = GF.today(); $('#vs-ate').value = GF.today(); }
+    carregarVS();
+  }
+
   GF.views.saidas = { load: carregarSaidas };
   GF.views.entradas = { load: carregarEntradas };
+  GF.views['vendas-saidas'] = { load: abrirVS };
 
   GF.initMovimentos = () => {
     $('#btn-registrar-saida-modal').addEventListener('click', () => abrir('Saída'));
@@ -161,5 +195,10 @@
       $(a).addEventListener('change', fn); $(b).addEventListener('change', fn);
       $(l).addEventListener('click', () => { $(a).value = ''; $(b).value = ''; fn(); });
     });
+    ['#vs-de', '#vs-ate', '#vs-origem', '#vs-produto'].forEach(s => $(s).addEventListener('change', carregarVS));
+    $('#vs-limpar').addEventListener('click', () => { ['#vs-de', '#vs-ate', '#vs-origem', '#vs-produto'].forEach(s => { $(s).value = ''; }); carregarVS(); });
+    const exportarVS = fmt => GF.download(`/api/reports/outflows?${[...filtroVS(), `format=${fmt}`].join('&')}`, `gestfast-saidas.${fmt}`);
+    $('#vs-pdf').addEventListener('click', () => exportarVS('pdf'));
+    $('#vs-excel').addEventListener('click', () => exportarVS('xlsx'));
   };
 })();

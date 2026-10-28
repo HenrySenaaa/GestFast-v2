@@ -493,3 +493,30 @@ test('Etapa 3: relatório de consumo soma só as produções concluídas', async
   assert.equal(xlsx.buf.slice(0, 2).toString(), 'PK');
   assert.equal((await (await funcEtapa3()).get('/api/reports/consumption')).status, 403);
 });
+
+// ---------------------------------------------------------------- ajustes pedidos pelo Enzo (etapa 4)
+test('Vendas e Saídas: lista única de saídas com filtro por origem e produto, resumo e exportação', async () => {
+  const a = await admin();
+  const hoje = db.util.dataISO();
+  assert.equal((await a.post('/api/sales', { itens: [{ id_produto: 2, quantidade: 1 }], forma_pagamento: 'PIX' })).status, 201);
+  assert.equal((await a.post('/api/losses', { motivo_perda: 'Sobra do dia', itens: [{ id_produto: 2, quantidade: 1 }] })).status, 201);
+
+  const r = await a.get(`/api/movements?tipo=Saída&from=${hoje}&to=${hoje}&resumo=1&limit=50`);
+  assert.equal(r.status, 200);
+  assert.ok(r.movements.every(m => m.tipo_movimentacao === 'Saída'));
+  const venda = r.porOrigem.find(o => o.origem === 'venda'), perda = r.porOrigem.find(o => o.origem === 'perda');
+  assert.ok(venda && perda);
+  assert.equal(Math.round(r.porOrigem.reduce((s, o) => s + o.valor, 0) * 100) / 100, r.valorTotal);
+  assert.equal(r.porOrigem.reduce((s, o) => s + o.registros, 0), r.total);
+
+  const so = await a.get(`/api/movements?tipo=Saída&origem=perda&id_produto=2&limit=50`);
+  assert.ok(so.movements.length >= 1 && so.movements.every(m => m.origem === 'perda' && m.id_produto === 2));
+  assert.equal((await a.get('/api/movements?origem=invalida')).status, 400);
+  assert.equal((await a.get('/api/movements?from=2026-05-10&to=2026-05-01')).status, 400);
+
+  const f = await funcEtapa3(); // todos os perfis veem e exportam as saídas
+  const pdf = await f.raw(`/api/reports/outflows?from=${hoje}&to=${hoje}&format=pdf`);
+  assert.equal(pdf.buf.slice(0, 5).toString(), '%PDF-');
+  const xlsx = await f.raw('/api/reports/outflows?origem=venda&format=xlsx');
+  assert.equal(xlsx.buf.slice(0, 2).toString(), 'PK');
+});
