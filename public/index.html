@@ -316,7 +316,11 @@
       <section id="view-requisicoes" class="app-view">
         <div class="figma-tab-header">
           <div class="figma-tab-title-pill">Requisições</div>
-          <button class="btn btn-primary" id="btn-abrir-modal-req" data-perm="requisicoes:criar"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> Nova requisição</button>
+          <div class="tab-header-actions">
+            <button class="btn btn-secondary" id="btn-fornecedores" data-perm="fornecedores:gerir"><svg class="icon" aria-hidden="true"><use href="#i-truck"/></svg> Fornecedores</button>
+            <button class="btn btn-secondary" id="btn-pedido-massa" data-perm="requisicoes:criar"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg> Pedido em massa</button>
+            <button class="btn btn-primary" id="btn-abrir-modal-req" data-perm="requisicoes:criar"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> Nova requisição</button>
+          </div>
         </div>
 
         <div class="figma-card requisicao-figma-showcase" id="req-showcase">

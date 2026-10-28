@@ -60,6 +60,15 @@ function validarTexto(valor, rotulo, { obrigatorio = false, min = 10, max = 5000
   return t;
 }
 
+// WhatsApp: aceita "(11) 91234-5678", "11912345678" ou "+55 11 91234-5678"; guarda "5511912345678". Vazio = sem número.
+function normalizarWhatsapp(v) {
+  const d = txt(v).replace(/\D/g, '');
+  if (!d) return null;
+  if (d.length === 10 || d.length === 11) return `55${d}`;
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) return d;
+  throw erro('WhatsApp inválido: informe DDD + número (ex.: 11 91234-5678).');
+}
+
 const FORMAS_PAGAMENTO = ['Dinheiro', 'Cartão Débito', 'Cartão Crédito', 'PIX'];
 const SITUACOES_ABERTAS = ['Em Aberto', 'Cotado', 'AF Gerada'];
 const MOTIVOS_PERDA = ['Vencido', 'Quebra/Avaria', 'Sobra do dia', 'Outro'];
@@ -120,7 +129,7 @@ const mapProducao = r => ({
   ...(r.status === 'Estornada' ? { estornada_por: r.estornada_por_nome, data_estorno: hm(r.data_estorno), motivo_estorno: r.motivo_estorno } : {})
 });
 
-const SQL_REQ = `SELECT r.*, f.nome AS fornecedor FROM requisicao r JOIN fornecedor f ON f.id_fornecedor = r.id_fornecedor`;
+const SQL_REQ = `SELECT r.*, f.nome AS fornecedor, f.whatsapp AS fornecedor_whatsapp FROM requisicao r JOIN fornecedor f ON f.id_fornecedor = r.id_fornecedor`;
 
 class Database {
   constructor() {
@@ -144,6 +153,9 @@ class Database {
     const [fichas] = await pool.query(
       "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'ficha_tecnica'");
     if (!fichas.length) throw erro('O banco ainda não tem as tabelas de produção (etapa 3). Rode database/migracao-etapa3.sql no MySQL Workbench.', 500);
+    const [etapa4] = await pool.query(
+      "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'venda_pagamento'");
+    if (!etapa4.length) throw erro('O banco ainda não tem as tabelas da etapa 4 (pedido em massa e pagamento misto). Rode database/migracao-etapa4.sql no MySQL Workbench.', 500);
   }
 
   // Transação: roda fn(conn); no fim atualiza os alertas de estoque; erro = rollback de tudo.
@@ -164,6 +176,36 @@ class Database {
   async listFornecedores(c = pool) {
     const [rows] = await c.query('SELECT nome FROM fornecedor ORDER BY id_fornecedor');
     return rows.map(r => r.nome);
+  }
+
+  // Com o WhatsApp (tela de fornecedores e botão "Enviar pelo WhatsApp").
+  async listFornecedoresDetalhe(c = pool) {
+    const [rows] = await c.query('SELECT id_fornecedor, nome, whatsapp FROM fornecedor ORDER BY nome');
+    return rows.map(r => ({ ...r, whatsapp: r.whatsapp || '' }));
+  }
+
+  async fornecedorPorNome(c, nome) {
+    const [rows] = await c.query('SELECT id_fornecedor FROM fornecedor WHERE nome = ?', [txt(nome)]);
+    if (!txt(nome) || !rows.length) throw erro('Selecione um fornecedor da lista.');
+    return rows[0].id_fornecedor;
+  }
+
+  // Cria (id vazio) ou altera um fornecedor. O WhatsApp é guardado só com dígitos e o DDI 55.
+  saveFornecedor(id, data) {
+    return this.tx(async c => {
+      const nome = txt(data.nome);
+      if (nome.length < 2 || nome.length > 150) throw erro('O nome do fornecedor deve ter entre 2 e 150 caracteres.');
+      const whats = normalizarWhatsapp(data.whatsapp);
+      const [dup] = await c.query('SELECT id_fornecedor FROM fornecedor WHERE nome = ? AND id_fornecedor <> ?', [nome, idNum(id)]);
+      if (dup.length) throw erro('Já existe um fornecedor com esse nome.');
+      if (id) {
+        const [r] = await c.query('UPDATE fornecedor SET nome = ?, whatsapp = ? WHERE id_fornecedor = ?', [nome, whats, idNum(id)]);
+        if (!r.affectedRows) throw erro('Fornecedor não encontrado.', 404);
+        return { id_fornecedor: idNum(id), nome, whatsapp: whats || '' };
+      }
+      const [r] = await c.query('INSERT INTO fornecedor (nome, whatsapp) VALUES (?, ?)', [nome, whats]);
+      return { id_fornecedor: r.insertId, nome, whatsapp: whats || '' };
+    });
   }
 
   async listPerfis(c = pool) {
@@ -638,7 +680,7 @@ class Database {
     hist.forEach(h => porReq.get(h.id_requisicao).push({ data: hm(h.data_registro), situacao: h.situacao, usuario: h.usuario || '-' }));
     return rows.map(r => {
       const { id_fornecedor, numero_pedido, ...resto } = r;
-      return { ...resto, observacao: r.observacao || '', historico: porReq.get(r.id_requisicao) };
+      return { ...resto, observacao: r.observacao || '', fornecedor_whatsapp: r.fornecedor_whatsapp || '', historico: porReq.get(r.id_requisicao) };
     });
   }
 
@@ -663,37 +705,129 @@ class Database {
       [idReq, dataHora(), situacao, ator ? ator.id_usuario : null]);
   }
 
+  // Previsão de entrega, observação e endereço valem para o pedido inteiro (um item ou vários).
+  dadosComunsPedido(data) {
+    const prev = txt(data.previsao_entrega) || dataISO(deslocar(4));
+    if (!DATA_RE.test(prev) || prev < dataISO()) throw erro('A previsão de entrega deve ser uma data a partir de hoje.');
+    const obs = validarTexto(data.observacao, 'A observação da requisição', { min: 10, max: 5000 });
+    return { prev, obs, endereco: txt(data.endereco_entrega) || 'Padrão - Padaria Nova York' };
+  }
+
+  // Valida um item e grava a requisição "Em Aberto" na transação `c`. Devolve o id criado.
+  async inserirRequisicao(c, item, idFornecedor, comum, ator, grupo = null) {
+    const prod = item.id_produto ? await this.getProductById(item.id_produto, c) : null;
+    if (item.id_produto && !prod) throw erro('Produto não encontrado.', 404);
+    const nomeProd = prod ? prod.nome_produto : txt(item.produto_nome);
+    if (!nomeProd) throw erro('O nome do produto é obrigatório.');
+    const qtd = Number(item.quantidade_pedida);
+    if (!Number.isFinite(qtd) || qtd <= 0) throw erro(`A quantidade pedida de "${nomeProd}" deve ser maior que zero.`);
+    const un = prod ? prod.unidade : (txt(item.unidade) || 'UN');
+    if (!aceitaFracao(un) && !Number.isInteger(qtd)) throw erro(`A unidade ${un} só aceita quantidades inteiras ("${nomeProd}").`);
+    const vu = item.valor_unitario === '' || item.valor_unitario === undefined || item.valor_unitario === null ? (prod ? prod.preco_custo : 0) : Number(item.valor_unitario);
+    if (!Number.isFinite(vu) || vu < 0) throw erro(`O preço unitário de "${nomeProd}" é inválido.`);
+    // Código = maior número existente + 1 (não depende do id, que pode pular).
+    // numero_pedido é calculado e indexado pelo banco: o MAX sai do índice e trava só o fim dele.
+    const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao FOR UPDATE');
+    const [r] = await c.query(
+      `INSERT INTO requisicao (codigo_pedido, pedido_grupo, id_fornecedor, id_produto, produto_nome, quantidade_pedida, quantidade_atendida, unidade,
+         valor_unitario, valor_total, situacao, data_pedido, previsao_entrega, endereco_entrega, observacao)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'Em Aberto', ?, ?, ?, ?)`,
+      [`REQ-${Number(mx.n) + 1}`, grupo, idFornecedor, prod ? prod.id_produto : null, nomeProd, r3(qtd), un, r2(vu), r2(qtd * vu),
+        dataISO(), comum.prev, comum.endereco, comum.obs]
+    );
+    await this.registrarHistorico(c, r.insertId, 'Em Aberto', ator);
+    return r.insertId;
+  }
+
   createRequisicao(data, ator) {
     return this.tx(async c => {
-      const [forn] = await c.query('SELECT id_fornecedor FROM fornecedor WHERE nome = ?', [txt(data.fornecedor)]);
-      if (!data.fornecedor || !forn.length) throw erro('Selecione um fornecedor da lista.');
-      const prod = data.id_produto ? await this.getProductById(data.id_produto, c) : null;
-      if (data.id_produto && !prod) throw erro('Produto não encontrado.', 404);
-      const nomeProd = prod ? prod.nome_produto : txt(data.produto_nome);
-      if (!nomeProd) throw erro('O nome do produto é obrigatório.');
-      const qtd = Number(data.quantidade_pedida);
-      if (!Number.isFinite(qtd) || qtd <= 0) throw erro('A quantidade pedida deve ser maior que zero.');
-      const un = prod ? prod.unidade : (txt(data.unidade) || 'UN');
-      if (!aceitaFracao(un) && !Number.isInteger(qtd)) throw erro(`A unidade ${un} só aceita quantidades inteiras.`);
-      const vu = data.valor_unitario === '' || data.valor_unitario === undefined ? (prod ? prod.preco_custo : 0) : Number(data.valor_unitario);
-      if (!Number.isFinite(vu) || vu < 0) throw erro('O preço unitário é inválido.');
-      const prev = txt(data.previsao_entrega) || dataISO(deslocar(4));
-      if (!DATA_RE.test(prev) || prev < dataISO()) throw erro('A previsão de entrega deve ser uma data a partir de hoje.');
-      const obs = validarTexto(data.observacao, 'A observação da requisição', { min: 10, max: 5000 });
+      const idForn = await this.fornecedorPorNome(c, data.fornecedor);
+      const comum = this.dadosComunsPedido(data);
+      const id = await this.inserirRequisicao(c, data, idForn, comum, ator);
       gateways.comunicarFornecedor('PEDIDO', data, await this.getSettings(c));
-      // Código = maior número existente + 1 (não depende do id, que pode pular).
-      // numero_pedido é calculado e indexado pelo banco: o MAX sai do índice e trava só o fim dele.
-      const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao FOR UPDATE');
-      const [r] = await c.query(
-        `INSERT INTO requisicao (codigo_pedido, id_fornecedor, id_produto, produto_nome, quantidade_pedida, quantidade_atendida, unidade,
-           valor_unitario, valor_total, situacao, data_pedido, previsao_entrega, endereco_entrega, observacao)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 'Em Aberto', ?, ?, ?, ?)`,
-        [`REQ-${Number(mx.n) + 1}`, forn[0].id_fornecedor, prod ? prod.id_produto : null, nomeProd, r3(qtd), un, r2(vu), r2(qtd * vu),
-          dataISO(), prev, txt(data.endereco_entrega) || 'Padrão - Padaria Nova York', obs]
-      );
-      await this.registrarHistorico(c, r.insertId, 'Em Aberto', ator);
-      return this.getRequisicao(r.insertId, c);
+      return this.getRequisicao(id, c);
     });
+  }
+
+  // Pedido em massa: vários itens do catálogo para o mesmo fornecedor, numa transação só. Cada item vira uma
+  // requisição (o recebimento continua item a item) e todas levam o mesmo código de pedido (PED-<1º número>).
+  createPedidoEmMassa(data, ator) {
+    return this.tx(async c => {
+      const idForn = await this.fornecedorPorNome(c, data.fornecedor);
+      const itens = Array.isArray(data.itens) ? data.itens : [];
+      if (!itens.length) throw erro('Inclua ao menos um item no pedido.');
+      if (itens.length > 100) throw erro('Um pedido pode ter no máximo 100 itens.');
+      const vistos = new Set();
+      for (const it of itens) {
+        if (!idNum(it.id_produto)) throw erro('No pedido em massa, todos os itens precisam ser produtos do catálogo.');
+        if (vistos.has(idNum(it.id_produto))) throw erro('Há produto repetido no pedido: junte as quantidades numa linha só.');
+        vistos.add(idNum(it.id_produto));
+      }
+      const comum = this.dadosComunsPedido(data);
+      const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao FOR UPDATE');
+      const grupo = `PED-${Number(mx.n) + 1}`;
+      const ids = [];
+      for (const it of itens) ids.push(await this.inserirRequisicao(c, it, idForn, comum, ator, grupo));
+      gateways.comunicarFornecedor('PEDIDO', data, await this.getSettings(c));
+      const [rows] = await c.query(`${SQL_REQ} WHERE r.id_requisicao IN (?) ORDER BY r.id_requisicao`, [ids]);
+      const requisicoes = await this.montarRequisicoes(rows, c);
+      return { pedido_grupo: grupo, valor_total: r2(requisicoes.reduce((s, r) => s + r.valor_total, 0)), requisicoes };
+    });
+  }
+
+  // ---------------------------------------------------------------- pedidos predefinidos (modelos)
+  async listModelos(c = pool) {
+    const [modelos] = await c.query(
+      `SELECT m.id_modelo, m.nome, m.observacao, m.atualizado_em, m.id_fornecedor, f.nome AS fornecedor
+       FROM pedido_modelo m JOIN fornecedor f ON f.id_fornecedor = m.id_fornecedor ORDER BY m.nome`);
+    if (!modelos.length) return [];
+    const [itens] = await c.query(
+      `SELECT i.id_modelo, i.id_produto, i.quantidade, p.nome_produto, p.unidade, p.preco_custo, p.quantidade_estoque, p.estoque_minimo, p.status
+       FROM item_pedido_modelo i JOIN produto p ON p.id_produto = i.id_produto
+       WHERE i.id_modelo IN (?) ORDER BY p.nome_produto`, [modelos.map(m => m.id_modelo)]);
+    return modelos.map(m => ({
+      ...m, observacao: m.observacao || '', atualizado_em: hm(m.atualizado_em),
+      itens: itens.filter(i => i.id_modelo === m.id_modelo).map(({ id_modelo, ...i }) => i)
+    }));
+  }
+
+  // Cria (id vazio) ou substitui um modelo: nome, fornecedor e a lista de itens com a quantidade de sempre.
+  saveModelo(id, data, ator) {
+    return this.tx(async c => {
+      const nome = txt(data.nome);
+      if (nome.length < 3 || nome.length > 80) throw erro('O nome do pedido predefinido deve ter entre 3 e 80 caracteres.');
+      const idForn = await this.fornecedorPorNome(c, data.fornecedor);
+      const itens = Array.isArray(data.itens) ? data.itens : [];
+      if (!itens.length) throw erro('Inclua ao menos um item no pedido predefinido.');
+      const linhas = new Map();
+      for (const it of itens) {
+        const prod = await this.getProductById(it.id_produto, c);
+        if (!prod) throw erro('Produto não encontrado.', 404);
+        if (linhas.has(prod.id_produto)) throw erro(`"${prod.nome_produto}" aparece mais de uma vez no pedido predefinido.`);
+        linhas.set(prod.id_produto, validarQuantidade(prod, it.quantidade));
+      }
+      const obs = validarTexto(data.observacao, 'A observação', { min: 10, max: 5000 });
+      const [dup] = await c.query('SELECT id_modelo FROM pedido_modelo WHERE nome = ? AND id_modelo <> ?', [nome, idNum(id)]);
+      if (dup.length) throw erro('Já existe um pedido predefinido com esse nome.');
+      let idModelo = idNum(id);
+      if (idModelo) {
+        const [r] = await c.query('UPDATE pedido_modelo SET nome = ?, id_fornecedor = ?, observacao = ?, atualizado_em = ?, id_usuario = ? WHERE id_modelo = ?',
+          [nome, idForn, obs || null, dataHora(), ator.id_usuario, idModelo]);
+        if (!r.affectedRows) throw erro('Pedido predefinido não encontrado.', 404);
+        await c.query('DELETE FROM item_pedido_modelo WHERE id_modelo = ?', [idModelo]);
+      } else {
+        const [r] = await c.query('INSERT INTO pedido_modelo (nome, id_fornecedor, observacao, atualizado_em, id_usuario) VALUES (?, ?, ?, ?, ?)',
+          [nome, idForn, obs || null, dataHora(), ator.id_usuario]);
+        idModelo = r.insertId;
+      }
+      await c.query('INSERT INTO item_pedido_modelo (id_modelo, id_produto, quantidade) VALUES ?', [[...linhas].map(([idp, q]) => [idModelo, idp, q])]);
+      return (await this.listModelos(c)).find(m => m.id_modelo === idModelo);
+    });
+  }
+
+  async deleteModelo(id) {
+    const [r] = await pool.query('DELETE FROM pedido_modelo WHERE id_modelo = ?', [idNum(id)]);
+    if (!r.affectedRows) throw erro('Pedido predefinido não encontrado.', 404);
   }
 
   updateRequisicaoStatus(id, body, ator) {

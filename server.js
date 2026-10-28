@@ -155,7 +155,10 @@ route('GET', '/api/dashboard', { perm: 'dashboard:ver' }, async ctx => {
 });
 route('GET', '/api/alerts', { perm: 'dashboard:ver' }, async () => ok({ alerts: await db.getAlertasCriticos() }));
 route('GET', '/api/categories', {}, async () => ok({ categories: await db.listCategorias() }));
-route('GET', '/api/suppliers', {}, async () => ok({ suppliers: await db.listFornecedores() }));
+// ?detalhe=1 devolve id, nome e WhatsApp; sem ele, só os nomes (como antes).
+route('GET', '/api/suppliers', {}, async ctx => ok({ suppliers: ctx.query.detalhe ? await db.listFornecedoresDetalhe() : await db.listFornecedores() }));
+route('POST', '/api/suppliers', { perm: 'fornecedores:gerir' }, async ctx => ok({ supplier: await db.saveFornecedor(null, ctx.body), message: 'Fornecedor cadastrado com sucesso!' }, 201));
+route('PUT', '/api/suppliers/:id', { perm: 'fornecedores:gerir' }, async ctx => ok({ supplier: await db.saveFornecedor(ctx.params.id, ctx.body), message: 'Fornecedor atualizado com sucesso!' }));
 route('GET', '/api/profiles', { perm: 'usuarios:gerir' }, async () => ok({ profiles: await db.listPerfis() }));
 route('GET', '/api/settings', {}, async ctx => ok({ settings: await db.getSettings(), hoje: hojeISO() }));
 route('PUT', '/api/settings', { perm: 'config:gerir' }, async ctx => ok({ settings: await db.updateSettings(ctx.body), message: 'Configurações salvas com sucesso!' }));
@@ -225,6 +228,19 @@ route('GET', '/api/requisitions/:id', { perm: 'requisicoes:ver' }, async ctx => 
   return ok({ requisicao: r });
 });
 route('POST', '/api/requisitions', { perm: 'requisicoes:criar' }, async ctx => ok({ requisicao: await db.createRequisicao(ctx.body, ctx.user), message: 'Pedido realizado com sucesso' }, 201));
+route('POST', '/api/requisitions/batch', { perm: 'requisicoes:criar' }, async ctx => {
+  const p = await db.createPedidoEmMassa(ctx.body, ctx.user);
+  return ok({ pedido: p, message: `Pedido ${p.pedido_grupo} realizado com ${p.requisicoes.length} item(ns)` }, 201);
+});
+
+// ---------------- pedidos predefinidos (modelos de pedido em massa)
+route('GET', '/api/order-templates', { perm: 'requisicoes:ver' }, async () => ok({ modelos: await db.listModelos() }));
+route('POST', '/api/order-templates', { perm: 'requisicoes:criar' }, async ctx => ok({ modelo: await db.saveModelo(null, ctx.body, ctx.user), message: 'Pedido predefinido salvo!' }, 201));
+route('PUT', '/api/order-templates/:id', { perm: 'requisicoes:criar' }, async ctx => ok({ modelo: await db.saveModelo(ctx.params.id, ctx.body, ctx.user), message: 'Pedido predefinido atualizado!' }));
+route('DELETE', '/api/order-templates/:id', { perm: 'requisicoes:criar' }, async ctx => {
+  await db.deleteModelo(ctx.params.id);
+  return ok({ message: 'Pedido predefinido excluído.' });
+});
 route('PATCH', '/api/requisitions/:id/status', {}, async ctx => {
   const sit = ctx.body.situacao;
   exigir(ctx, sit === 'Cancelado' ? 'requisicoes:cancelar' : sit === 'Finalizado' ? 'requisicoes:receber' : 'requisicoes:avancar');

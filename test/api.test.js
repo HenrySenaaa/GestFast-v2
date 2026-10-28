@@ -563,3 +563,77 @@ test('Auditoria: mapa aponta o que conferir primeiro e o extrato refaz o saldo d
   assert.equal((await (await funcEtapa3()).get('/api/audit')).status, 403);
   assert.equal((await (await back()).get('/api/audit')).status, 200);
 });
+
+test('Fornecedores: cadastro com WhatsApp normalizado e número disponível na requisição', async () => {
+  const a = await admin();
+  let r = await a.post('/api/suppliers', { nome: 'Moinho Teste WhatsApp', whatsapp: '(11) 91234-5678' });
+  assert.equal(r.status, 201, r.error);
+  assert.equal(r.supplier.whatsapp, '5511912345678');
+  const id = r.supplier.id_fornecedor;
+  assert.equal((await a.post('/api/suppliers', { nome: 'Moinho Teste WhatsApp' })).error, 'Já existe um fornecedor com esse nome.');
+  assert.equal((await a.post('/api/suppliers', { nome: 'Outro', whatsapp: '1234' })).status, 400);
+  assert.equal((await a.put(`/api/suppliers/${id}`, { nome: 'Moinho Teste WhatsApp', whatsapp: '+55 11 3333-4444' })).supplier.whatsapp, '551133334444');
+  assert.equal((await a.put(`/api/suppliers/${id}`, { nome: 'Moinho Teste WhatsApp', whatsapp: '' })).supplier.whatsapp, '');
+  await a.put(`/api/suppliers/${id}`, { nome: 'Moinho Teste WhatsApp', whatsapp: '11 91234-5678' });
+  assert.equal((await a.put('/api/suppliers/99999', { nome: 'Nada Aqui' })).status, 404);
+
+  assert.deepEqual((await a.get('/api/suppliers')).suppliers.includes('Moinho Teste WhatsApp'), true); // lista simples continua igual
+  assert.equal((await a.get('/api/suppliers?detalhe=1')).suppliers.find(f => f.id_fornecedor === id).whatsapp, '5511912345678');
+
+  const req = await a.post('/api/requisitions', { id_produto: 6, quantidade_pedida: 2, fornecedor: 'Moinho Teste WhatsApp' });
+  assert.equal(req.status, 201, req.error);
+  assert.equal(req.requisicao.fornecedor_whatsapp, '5511912345678');
+  assert.equal(req.requisicao.pedido_grupo, null);
+
+  assert.equal((await (await funcEtapa3()).post('/api/suppliers', { nome: 'Fornecedor do Funcionário' })).status, 403);
+});
+
+test('Pedido em massa: vários itens num pedido só, tudo ou nada, e pedidos predefinidos', async () => {
+  const a = await admin();
+  const [[{ n: antes }]] = await db.pool.query('SELECT COUNT(*) AS n FROM requisicao');
+  let r = await a.post('/api/requisitions/batch', {
+    fornecedor: 'Moinho Paulista de Trigo', previsao_entrega: db.util.dataISO(new Date(Date.now() + 2 * 86400000)),
+    itens: [{ id_produto: 13, quantidade_pedida: 50 }, { id_produto: 14, quantidade_pedida: 1.5, valor_unitario: 30 }, { id_produto: 5, quantidade_pedida: 10 }]
+  });
+  assert.equal(r.status, 201, r.error);
+  const p = r.pedido;
+  assert.equal(p.requisicoes.length, 3);
+  assert.match(p.pedido_grupo, /^PED-\d+$/);
+  assert.equal(p.pedido_grupo.slice(4), p.requisicoes[0].codigo_pedido.slice(4)); // PED-<número do 1º item>
+  assert.ok(p.requisicoes.every(x => x.pedido_grupo === p.pedido_grupo && x.situacao === 'Em Aberto' && x.fornecedor === 'Moinho Paulista de Trigo'));
+  assert.equal(p.requisicoes[0].valor_unitario, 3.40); // sem valor informado usa o preço de custo
+  assert.equal(p.valor_total, Math.round((50 * 3.4 + 1.5 * 30 + 10 * 3.2) * 100) / 100);
+
+  // item inválido no meio: nada é gravado
+  const [[{ n: meio }]] = await db.pool.query('SELECT COUNT(*) AS n FROM requisicao');
+  assert.equal(Number(meio), Number(antes) + 3);
+  r = await a.post('/api/requisitions/batch', { fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade_pedida: 10 }, { id_produto: 5, quantidade_pedida: 2.5 }] });
+  assert.equal(r.status, 400); assert.match(r.error, /inteiras/);
+  assert.equal((await a.post('/api/requisitions/batch', { fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade_pedida: 1 }, { id_produto: 13, quantidade_pedida: 2 }] })).status, 400);
+  assert.equal((await a.post('/api/requisitions/batch', { fornecedor: 'Moinho Paulista de Trigo', itens: [] })).status, 400);
+  assert.equal((await a.post('/api/requisitions/batch', { fornecedor: 'Não Existe', itens: [{ id_produto: 13, quantidade_pedida: 1 }] })).status, 400);
+  const [[{ n: depois }]] = await db.pool.query('SELECT COUNT(*) AS n FROM requisicao');
+  assert.equal(Number(depois), Number(meio));
+
+  // receber um item do pedido em massa continua igual (entrada no estoque daquele produto)
+  const s13 = await saldo(13);
+  const rec = await a.patch(`/api/requisitions/${p.requisicoes[0].id_requisicao}/status`, { situacao: 'Finalizado' });
+  assert.equal(rec.status, 200, rec.error);
+  assert.equal(await saldo(13), s13 + 50);
+
+  // pedidos predefinidos
+  let m = await a.post('/api/order-templates', { nome: 'Pedido semanal do moinho', fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade: 100 }, { id_produto: 14, quantidade: 2 }] });
+  assert.equal(m.status, 201, m.error);
+  const idm = m.modelo.id_modelo;
+  assert.equal(m.modelo.itens.length, 2); assert.equal(m.modelo.fornecedor, 'Moinho Paulista de Trigo');
+  assert.equal((await a.post('/api/order-templates', { nome: 'Pedido semanal do moinho', fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade: 1 }] })).status, 400);
+  assert.equal((await a.post('/api/order-templates', { nome: 'Sem itens', fornecedor: 'Moinho Paulista de Trigo', itens: [] })).status, 400);
+  assert.equal((await a.post('/api/order-templates', { nome: 'Fração errada', fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 5, quantidade: 1.5 }] })).status, 400);
+  m = await a.put(`/api/order-templates/${idm}`, { nome: 'Pedido semanal do moinho', fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade: 75 }] });
+  assert.equal(m.status, 200, m.error);
+  assert.deepEqual(m.modelo.itens.map(i => [i.id_produto, i.quantidade]), [[13, 75]]);
+  const lista = (await (await funcEtapa3()).get('/api/order-templates')).modelos;
+  assert.ok(lista.some(x => x.id_modelo === idm && x.itens[0].nome_produto && x.itens[0].estoque_minimo !== undefined));
+  assert.equal((await a.del(`/api/order-templates/${idm}`)).status, 200);
+  assert.equal((await a.del(`/api/order-templates/${idm}`)).status, 404);
+});

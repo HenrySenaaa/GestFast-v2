@@ -70,7 +70,8 @@ CREATE TABLE categoria (
 
 CREATE TABLE fornecedor (
   id_fornecedor INT PRIMARY KEY AUTO_INCREMENT,
-  nome          VARCHAR(150) NOT NULL UNIQUE
+  nome          VARCHAR(150) NOT NULL UNIQUE,
+  whatsapp      VARCHAR(15) NULL                      -- só dígitos, com DDI 55 (botão "Enviar pelo WhatsApp")
 ) ENGINE=InnoDB;
 
 CREATE TABLE produto (
@@ -116,6 +117,7 @@ CREATE TABLE alerta_estoque (
 CREATE TABLE requisicao (
   id_requisicao              INT PRIMARY KEY AUTO_INCREMENT,
   codigo_pedido              VARCHAR(20) NOT NULL UNIQUE,
+  pedido_grupo               VARCHAR(20) NULL,        -- pedido em massa: requisições feitas juntas (PED-9661)
   id_fornecedor              INT NOT NULL,
   id_produto                 INT NULL,                -- pode ser item ainda não cadastrado
   produto_nome               VARCHAR(200) NOT NULL,
@@ -145,6 +147,28 @@ CREATE TABLE requisicao_historico (
   FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario)
 ) ENGINE=InnoDB;
 
+-- Pedidos predefinidos (ex.: "Pedido semanal do moinho"): fornecedor + itens com a quantidade de sempre.
+CREATE TABLE pedido_modelo (
+  id_modelo     INT PRIMARY KEY AUTO_INCREMENT,
+  nome          VARCHAR(80) NOT NULL UNIQUE,
+  id_fornecedor INT NOT NULL,
+  observacao    TEXT,
+  atualizado_em DATETIME NOT NULL,
+  id_usuario    INT,
+  FOREIGN KEY (id_fornecedor) REFERENCES fornecedor(id_fornecedor),
+  FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario)
+) ENGINE=InnoDB;
+
+CREATE TABLE item_pedido_modelo (
+  id_modelo  INT NOT NULL,
+  id_produto INT NOT NULL,
+  quantidade DECIMAL(12,3) NOT NULL,
+  PRIMARY KEY (id_modelo, id_produto),
+  FOREIGN KEY (id_modelo) REFERENCES pedido_modelo(id_modelo) ON DELETE CASCADE,
+  FOREIGN KEY (id_produto) REFERENCES produto(id_produto),
+  CHECK (quantidade > 0)
+) ENGINE=InnoDB;
+
 -- ---------------------------------------------------------------------
 -- Vendas (PDV / balcão)
 -- ---------------------------------------------------------------------
@@ -157,7 +181,7 @@ CREATE TABLE venda (
   desconto_tipo       ENUM('valor','percentual') NOT NULL DEFAULT 'valor',
   desconto_informado  DECIMAL(12,2) NOT NULL DEFAULT 0, -- valor digitado (R$ ou %), usado ao editar a venda
   valor_total         DECIMAL(12,2) NOT NULL,
-  forma_pagamento     ENUM('Dinheiro','Cartão Débito','Cartão Crédito','PIX') NOT NULL,
+  forma_pagamento     ENUM('Dinheiro','Cartão Débito','Cartão Crédito','PIX','Misto') NOT NULL, -- Misto: partes em venda_pagamento
   valor_recebido      DECIMAL(12,2),
   troco               DECIMAL(12,2),
   nsu                 VARCHAR(20),
@@ -184,6 +208,17 @@ CREATE TABLE item_venda (
   subtotal       DECIMAL(12,2) NOT NULL,
   FOREIGN KEY (id_venda) REFERENCES venda(id_venda) ON DELETE CASCADE,
   FOREIGN KEY (id_produto) REFERENCES produto(id_produto)
+) ENGINE=InnoDB;
+
+-- Partes de uma venda com pagamento misto (ex.: R$ 20 no PIX + R$ 15 em dinheiro).
+CREATE TABLE venda_pagamento (
+  id_venda_pagamento INT PRIMARY KEY AUTO_INCREMENT,
+  id_venda           INT NOT NULL,
+  forma_pagamento    ENUM('Dinheiro','Cartão Débito','Cartão Crédito','PIX') NOT NULL,
+  valor              DECIMAL(12,2) NOT NULL,
+  nsu                VARCHAR(20),
+  FOREIGN KEY (id_venda) REFERENCES venda(id_venda) ON DELETE CASCADE,
+  CHECK (valor > 0)
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------
@@ -301,6 +336,7 @@ CREATE INDEX idx_produto_status ON produto(status, id_categoria);
 CREATE INDEX idx_produto_validade ON produto(status, validade);                  -- alerta de validade
 CREATE INDEX idx_alerta_status ON alerta_estoque(status_alerta, id_produto);
 CREATE INDEX idx_requisicao_situacao ON requisicao(situacao);                    -- requisições em aberto (painel)
+CREATE INDEX idx_requisicao_grupo ON requisicao(pedido_grupo);                   -- itens do mesmo pedido em massa
 CREATE INDEX idx_sessao_expira ON sessao(expira);                                -- limpeza das sessões vencidas
 CREATE INDEX idx_token_reset_expira ON token_reset(expira);
 CREATE INDEX idx_producao_data ON producao(data_producao);                       -- tela de Produção e relatório de consumo
