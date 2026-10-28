@@ -321,6 +321,11 @@ route('DELETE', '/api/sales/:id', { perm: 'vendas:excluir' }, async ctx => {
 route('GET', '/api/inventory', { perm: 'estoque:conferir' }, async () => ok({ conferencias: await db.listConferencias(), itensParaConferencia: await db.listProdutosAtivos() }));
 route('POST', '/api/inventory', { perm: 'estoque:conferir' }, async ctx => ok({ conferencia: await db.salvarConferencia(ctx.body, ctx.user), message: 'Conferência de estoque salva com sucesso!' }, 201));
 
+// ---------------- mapa de auditoria do estoque
+route('GET', '/api/audit', { perm: 'auditoria:ver' }, async ctx => ok({ mapa: await db.getMapaAuditoria({ dias: ctx.query.dias || 30 }) }));
+route('GET', '/api/audit/products/:id', { perm: 'auditoria:ver' }, async ctx =>
+  ok({ extrato: await db.getExtratoProduto(ctx.params.id, { from: ctx.query.from, to: ctx.query.to, limite: ctx.query.limit }) }));
+
 // ---------------- relatórios (+ exportação PDF/XLSX)
 const brl = n => `R$ ${Number(n).toFixed(2).replace('.', ',')}`;
 const num = n => String(Number(n)).replace('.', ',');

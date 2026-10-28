@@ -65,6 +65,7 @@ const SITUACOES_ABERTAS = ['Em Aberto', 'Cotado', 'AF Gerada'];
 const MOTIVOS_PERDA = ['Vencido', 'Quebra/Avaria', 'Sobra do dia', 'Outro'];
 const TIPOS_PRODUTO = ['Revenda', 'Produção', 'Insumo']; // Insumo não é vendido no caixa
 const ORIGENS_MOV = ['manual', 'venda', 'requisicao', 'conferencia', 'estorno', 'ajuste', 'perda', 'producao'];
+const ORIGENS_AJUSTE = ['manual', 'ajuste', 'conferencia', 'estorno']; // mexidas à mão: o que a auditoria olha primeiro
 
 // ------------------------------------------------------------------ consultas e conversões de linhas
 const SQL_USUARIO = 'SELECT u.*, p.nome_perfil FROM usuario u JOIN perfil p ON p.id_perfil = u.id_perfil';
@@ -1150,6 +1151,93 @@ class Database {
 
   async listProdutosAtivos() {
     return this.getProducts(null, null, 'Ativo');
+  }
+
+  // ---------------------------------------------------------------- mapa de auditoria do estoque
+  // Diz o que conferir primeiro: produto nunca conferido ou há muito tempo sem conferência, divergência na
+  // última contagem e muitos ajustes à mão (saída manual, ajuste de venda, ajuste de conferência, estorno).
+  async getMapaAuditoria({ dias = 30 } = {}) {
+    const d = Math.trunc(Number(dias));
+    if (!(d >= 1 && d <= 365)) throw erro('O período deve ser de 1 a 365 dias.');
+    const desde = dataHora(deslocar(-d));
+    const [[prods], [confs], [ultimas], [ajustes]] = await Promise.all([
+      pool.query("SELECT id_produto, nome_produto, codigo_barras, unidade, tipo, quantidade_estoque, preco_custo FROM produto WHERE status = 'Ativo' ORDER BY nome_produto"),
+      pool.query(`SELECT i.id_produto, COUNT(*) AS n, MAX(c.data_conferencia) AS ultima
+        FROM item_conferencia i JOIN conferencia c ON c.id_conferencia = i.id_conferencia GROUP BY i.id_produto`),
+      pool.query(`SELECT i.id_produto, i.divergencia FROM item_conferencia i
+        JOIN (SELECT id_produto, MAX(id_item_conferencia) AS id FROM item_conferencia GROUP BY id_produto) u ON u.id = i.id_item_conferencia`),
+      pool.query(`SELECT id_produto, COUNT(*) AS n, COALESCE(SUM(quantidade * valor_unitario), 0) AS valor FROM movimentacao_estoque
+        WHERE origem IN (?) AND data_movimentacao >= ? GROUP BY id_produto`, [ORIGENS_AJUSTE, desde])
+    ]);
+    const confDe = new Map(confs.map(c => [c.id_produto, c]));
+    const divDe = new Map(ultimas.map(u => [u.id_produto, u.divergencia]));
+    const ajDe = new Map(ajustes.map(a => [a.id_produto, a]));
+    const hoje = Date.parse(dataISO());
+    const itens = prods.map(p => {
+      const c = confDe.get(p.id_produto), aj = ajDe.get(p.id_produto);
+      const diasSem = c ? Math.max(0, Math.round((hoje - Date.parse(String(c.ultima).slice(0, 10))) / 86400000)) : null;
+      const div = c ? divDe.get(p.id_produto) : null;
+      const nAj = aj ? Number(aj.n) : 0;
+      const motivos = [];
+      let pontos = 0;
+      if (!c) { pontos += 3; motivos.push('Nunca conferido'); }
+      else if (diasSem > 30) { pontos += 2; motivos.push(`${diasSem} dias sem conferir`); }
+      else if (diasSem > 14) { pontos += 1; motivos.push(`${diasSem} dias sem conferir`); }
+      if (div) {
+        const valor = r2(Math.abs(div) * p.preco_custo);
+        pontos += valor >= 20 ? 3 : 2;
+        motivos.push(`Divergência de ${div > 0 ? '+' : ''}${div} ${p.unidade} na última conferência`);
+      }
+      if (nAj >= 3) { pontos += 2; motivos.push(`${nAj} ajustes à mão em ${d} dias`); }
+      else if (nAj) { pontos += 1; motivos.push(`${nAj} ajuste(s) à mão em ${d} dias`); }
+      return {
+        id_produto: p.id_produto, nome_produto: p.nome_produto, codigo_barras: p.codigo_barras, unidade: p.unidade, tipo: p.tipo,
+        quantidade_estoque: p.quantidade_estoque, conferencias: c ? Number(c.n) : 0, ultima_conferencia: c ? hm(c.ultima) : null,
+        dias_sem_conferir: diasSem, divergencia_ultima: div, valor_divergencia_ultima: div ? r2(Math.abs(div) * p.preco_custo) : 0,
+        ajustes: nAj, valor_ajustes: aj ? r2(aj.valor) : 0,
+        pontos, prioridade: pontos >= 4 ? 'Alta' : pontos >= 2 ? 'Média' : 'Baixa', motivos
+      };
+    }).sort((a, b) => b.pontos - a.pontos || b.valor_divergencia_ultima - a.valor_divergencia_ultima || a.nome_produto.localeCompare(b.nome_produto));
+    const conta = pr => itens.filter(i => i.prioridade === pr).length;
+    return {
+      dias: d, itens,
+      resumo: { alta: conta('Alta'), media: conta('Média'), baixa: conta('Baixa'), nuncaConferidos: itens.filter(i => !i.conferencias).length }
+    };
+  }
+
+  // Extrato de um produto: cada movimento com o saldo antes e depois, do mais recente para o mais antigo.
+  // O saldo é refeito de trás para frente a partir do estoque atual, então bate com o que o sistema mostra hoje.
+  async getExtratoProduto(id, { from, to, limite = 300 } = {}) {
+    this.validarPeriodo({ from, to });
+    const prod = await this.getProductById(id);
+    if (!prod) throw erro('Produto não encontrado.', 404);
+    const lim = Math.min(Math.max(Math.trunc(Number(limite)) || 300, 1), 1000);
+    const sinal = "CASE WHEN tipo_movimentacao = 'Entrada' THEN quantidade ELSE -quantidade END";
+    let depois = 0;
+    if (to) {
+      const [[s]] = await pool.query(`SELECT COALESCE(SUM(${sinal}), 0) AS q FROM movimentacao_estoque WHERE id_produto = ? AND data_movimentacao > ?`, [prod.id_produto, `${to} 23:59:59`]);
+      depois = Number(s.q);
+    }
+    const f = this.filtroMovimentacoes({ from, to, id_produto: prod.id_produto });
+    const [rows] = await pool.query(`${SQL_MOV}${f.sql} ORDER BY m.id_movimentacao DESC LIMIT ${lim}`, f.params);
+    let saldo = r3(prod.quantidade_estoque - depois);
+    const saldoFinal = saldo;
+    const movimentos = rows.map(r => {
+      const m = mapMov(r);
+      const antes = r3(saldo - (m.tipo_movimentacao === 'Entrada' ? m.quantidade : -m.quantidade));
+      const linha = { ...m, saldo_antes: antes, saldo_depois: saldo, atencao: ORIGENS_AJUSTE.includes(m.origem) };
+      saldo = antes;
+      return linha;
+    });
+    const [confs] = await pool.query(
+      `SELECT c.id_conferencia, c.data_conferencia, u.nome AS responsavel, c.ajustou_estoque, i.quantidade_sistema, i.quantidade_fisica, i.divergencia
+       FROM item_conferencia i JOIN conferencia c ON c.id_conferencia = i.id_conferencia JOIN usuario u ON u.id_usuario = c.id_usuario
+       WHERE i.id_produto = ? ORDER BY c.id_conferencia DESC LIMIT 20`, [prod.id_produto]);
+    return {
+      produto: { id_produto: prod.id_produto, nome_produto: prod.nome_produto, unidade: prod.unidade, quantidade_estoque: prod.quantidade_estoque },
+      filtros: { from: from || null, to: to || null }, saldoFinal, saldoInicial: saldo, movimentos, truncado: rows.length === lim,
+      conferencias: confs.map(c => ({ ...c, data_conferencia: hm(c.data_conferencia), ajustou_estoque: bool(c.ajustou_estoque) }))
+    };
   }
 
   // ---------------------------------------------------------------- relatórios (RF 12, 13, 14)

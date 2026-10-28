@@ -647,6 +647,12 @@ html[data-theme="dark"] .btn-finalizar-checkout, html.hc .btn-finalizar-checkout
 .rel-pagamentos > * { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 4px 10px; }
 .vs-origens:not(:empty) { margin-bottom: 12px; }
 
+/* ================================================================ AUDITORIA DO ESTOQUE */
+.aud-motivos { display: flex; flex-direction: column; gap: 2px; font-size: .82rem; min-width: 180px; }
+.row-atencao { background: var(--warning-soft); }
+.ext-tabela { max-height: 46vh; overflow: auto; }
+.ext-sub { margin: 16px 0 8px; font-size: .92rem; }
+
 /* ================================================================ CONFIGURAÇÃO / AJUDA */
 .config-form { max-width: 720px; }
 .config-details-list, .ajuda-details-list { display: flex; flex-direction: column; gap: 8px; font-size: .92rem; }

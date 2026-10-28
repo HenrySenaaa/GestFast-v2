@@ -168,6 +168,7 @@
         <a href="#dashboard" class="nav-item active" data-view="dashboard" data-perm="dashboard:ver" title="Início"><svg class="nav-ico" aria-hidden="true"><use href="#i-home"/></svg><span class="nav-text">Início</span></a>
         <div class="nav-group-label">Estoque</div>
         <a href="#estoque" class="nav-item" data-view="estoque" data-perm="estoque:conferir" title="Verificar Estoque"><svg class="nav-ico" aria-hidden="true"><use href="#i-box"/></svg><span class="nav-text">Verificar Estoque</span></a>
+        <a href="#auditoria" class="nav-item" data-view="auditoria" data-perm="auditoria:ver" title="Auditoria do Estoque"><svg class="nav-ico" aria-hidden="true"><use href="#i-eye"/></svg><span class="nav-text">Auditoria do Estoque</span></a>
         <a href="#entradas" class="nav-item" data-view="entradas" data-perm="movimentos:ver" title="Entrada de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-in"/></svg><span class="nav-text">Entrada de Produtos</span></a>
         <a href="#saidas" class="nav-item" data-view="saidas" data-perm="movimentos:ver" title="Saída de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-out"/></svg><span class="nav-text">Saída de Produtos</span></a>
         <a href="#vendas-saidas" class="nav-item" data-view="vendas-saidas" data-perm="movimentos:ver" title="Vendas e Saídas"><svg class="nav-ico" aria-hidden="true"><use href="#i-history"/></svg><span class="nav-text">Vendas e Saídas</span></a>
@@ -277,6 +278,35 @@
             <table class="figma-styled-table">
               <thead><tr><th>Descrição</th><th>Unid</th><th>Estoque</th><th>Lote</th><th>Validade</th><th>Contagem Física</th><th>Divergência</th></tr></thead>
               <tbody id="estoque-tabela-corpo"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2b. AUDITORIA DO ESTOQUE (o que conferir primeiro + extrato de cada produto) -->
+      <section id="view-auditoria" class="app-view">
+        <div class="figma-tab-header">
+          <div>
+            <div class="figma-tab-title-pill">Auditoria do Estoque</div>
+            <p class="page-sub">O que conferir primeiro: produtos nunca conferidos, com divergência na última contagem ou com muitos ajustes à mão.</p>
+          </div>
+          <label class="inline-field">Ajustes dos últimos
+            <select id="aud-dias" class="select-field" aria-label="Período dos ajustes"><option value="7">7 dias</option><option value="30" selected>30 dias</option><option value="90">90 dias</option></select>
+          </label>
+        </div>
+        <div class="kpi-grid" id="aud-cards" aria-live="polite"></div>
+        <div class="figma-card full-panel">
+          <div class="filter-toolbar">
+            <input type="text" id="aud-busca" placeholder="Filtrar por produto ou código..." class="input-search" aria-label="Filtrar auditoria por produto">
+            <select id="aud-prioridade" class="select-field" aria-label="Filtrar por prioridade">
+              <option value="">Todas as prioridades</option><option value="Alta">Prioridade alta</option><option value="Média">Prioridade média</option><option value="Baixa">Prioridade baixa</option>
+            </select>
+            <span class="toolbar-hint" id="aud-resumo"></span>
+          </div>
+          <div class="table-responsive">
+            <table class="figma-styled-table">
+              <thead><tr><th>Prioridade</th><th>Produto</th><th>Estoque</th><th>Última conferência</th><th>Divergência</th><th>Ajustes à mão</th><th>Por quê</th><th>Ações</th></tr></thead>
+              <tbody id="aud-corpo"></tbody>
             </table>
           </div>
         </div>
@@ -908,6 +938,7 @@
   <script src="js/auth.js"></script>
   <script src="js/dashboard.js"></script>
   <script src="js/estoque.js"></script>
+  <script src="js/auditoria.js"></script>
   <script src="js/requisicoes.js"></script>
   <script src="js/produtos.js"></script>
   <script src="js/movimentos.js"></script>

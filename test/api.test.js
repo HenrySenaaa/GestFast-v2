@@ -520,3 +520,46 @@ test('Vendas e Saídas: lista única de saídas com filtro por origem e produto,
   const xlsx = await f.raw('/api/reports/outflows?origem=venda&format=xlsx');
   assert.equal(xlsx.buf.slice(0, 2).toString(), 'PK');
 });
+
+test('Auditoria: mapa aponta o que conferir primeiro e o extrato refaz o saldo de cada movimento', async () => {
+  const a = await admin();
+  // divergência de -2 no Café na conferência + uma saída manual
+  const antes = await saldo(2);
+  assert.equal((await a.post('/api/inventory', { itens: [{ id_produto: 2, quantidade_fisica: antes - 2 }], observacao: 'Contagem de auditoria do café' })).status, 201);
+  assert.equal((await a.post('/api/movements', { tipo_movimentacao: 'Saída', itens: [{ id_produto: 2, quantidade: 1 }], observacao: 'Consumo interno da equipe' })).status, 201);
+
+  const r = await a.get('/api/audit?dias=30');
+  assert.equal(r.status, 200);
+  const m = r.mapa;
+  const cafe = m.itens.find(i => i.id_produto === 2);
+  assert.equal(cafe.divergencia_ultima, -2);
+  assert.equal(cafe.dias_sem_conferir, 0);
+  assert.ok(cafe.ajustes >= 2); // ajuste da conferência + saída manual
+  assert.ok(cafe.motivos.some(t => /Divergência de -2/.test(t)));
+  assert.ok(['Alta', 'Média'].includes(cafe.prioridade));
+  assert.equal(m.resumo.alta + m.resumo.media + m.resumo.baixa, m.itens.length);
+  for (let i = 1; i < m.itens.length; i++) assert.ok(m.itens[i - 1].pontos >= m.itens[i].pontos); // mais urgente primeiro
+  const nunca = m.itens.find(i => !i.conferencias);
+  if (nunca) assert.ok(nunca.motivos.includes('Nunca conferido'));
+  assert.equal((await a.get('/api/audit?dias=0')).status, 400);
+
+  // extrato: saldo depois do movimento mais recente = estoque atual; cada linha encadeia com a anterior
+  const x = (await a.get('/api/audit/products/2')).extrato;
+  assert.equal(x.saldoFinal, await saldo(2));
+  assert.equal(x.movimentos[0].saldo_depois, x.saldoFinal);
+  for (let i = 1; i < x.movimentos.length; i++) assert.equal(x.movimentos[i].saldo_depois, x.movimentos[i - 1].saldo_antes);
+  assert.ok(x.movimentos.some(mv => mv.origem === 'conferencia' && mv.atencao));
+  assert.ok(x.movimentos.some(mv => mv.origem === 'venda' && !mv.atencao));
+  assert.equal(x.conferencias[0].divergencia, -2);
+  // período que termina ontem: o saldo final desconta o que aconteceu depois
+  const ontem = db.util.dataISO(new Date(Date.now() - 86400000));
+  const xo = (await a.get(`/api/audit/products/2?to=${ontem}`)).extrato;
+  assert.ok(xo.movimentos.every(mv => mv.data_movimentacao.slice(0, 10) <= ontem));
+  const ultimoAteOntem = x.movimentos.find(mv => mv.data_movimentacao.slice(0, 10) <= ontem);
+  assert.equal(xo.saldoFinal, ultimoAteOntem ? ultimoAteOntem.saldo_depois : x.saldoInicial);
+  assert.equal((await a.get('/api/audit/products/99999')).status, 404);
+
+  // só Administrador e BackOffice veem a auditoria
+  assert.equal((await (await funcEtapa3()).get('/api/audit')).status, 403);
+  assert.equal((await (await back()).get('/api/audit')).status, 200);
+});

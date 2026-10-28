@@ -238,6 +238,7 @@
   const OPCOES = [
     { label: 'Início (Dashboard)', icon: 'home', desc: 'Alertas, compras recentes e distribuição do estoque', view: 'dashboard', k: 'inicio dashboard painel home alertas', perm: 'dashboard:ver' },
     { label: 'Verificar Estoque', icon: 'box', desc: 'Conferência física e divergências', view: 'estoque', k: 'estoque conferencia verificar inventario contagem', perm: 'estoque:conferir' },
+    { label: 'Auditoria do Estoque', icon: 'eye', desc: 'O que conferir primeiro e o extrato de cada produto', view: 'auditoria', k: 'auditoria mapa extrato divergencia conferir ajuste kardex', perm: 'auditoria:ver' },
     { label: 'Requisições de Compra', icon: 'clipboard', desc: 'Pedidos aos fornecedores', view: 'requisicoes', k: 'requisicao requisicoes pedido compra fornecedor', perm: 'requisicoes:ver' },
     { label: 'Cadastro de Produtos', icon: 'tag', desc: 'Incluir, alterar e inativar produtos', view: 'cadastro', k: 'cadastro produto cadastrar novo catalogo', perm: 'produtos:editar' },
     { label: 'Saída de Produtos', icon: 'out', desc: 'Baixas, descartes e perdas', view: 'saidas', k: 'saida saidas baixa descarte perda', perm: 'movimentos:ver' },
