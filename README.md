@@ -9,7 +9,8 @@ Sistema de gestão de estoque e vendas para panificadoras (projeto USCS - ADS). 
    **Banco que já existe** (usado pelo GestFast original): em vez disso, faça um backup e rode só
    `database/migracao-otimizacao.sql`. Ele não apaga dados, pode rodar mais de uma vez, e o GestFast original
    continua funcionando no mesmo banco. Depois rode `database/migracao-etapa3.sql` (produção: tipo de produto,
-   ficha técnica e registro de produção). Sem essas migrações, a v2 avisa no terminal e não sobe.
+   ficha técnica e registro de produção) e, por último, `database/migracao-etapa4.sql` (WhatsApp do fornecedor,
+   pedido em massa, pedidos predefinidos e pagamento misto). Sem essas migrações, a v2 avisa no terminal e não sobe.
 2. **Configurar a conexão**: copiar `.env.example` para `.env` e colocar a senha do seu MySQL.
    O `.env` não vai para o Git.
 3. **Instalar e rodar** (Node 18 ou superior):
@@ -17,7 +18,7 @@ Sistema de gestão de estoque e vendas para panificadoras (projeto USCS - ADS). 
 ```bash
 npm install
 npm start               # http://localhost:3000
-npm test                # 26 testes automatizados da API (cenários do Apêndice F + v2 + etapa 3)
+npm test                # 31 testes automatizados da API (cenários do Apêndice F + v2 + etapas 3 e 4)
 node test/carga.js      # teste de carga do banco (cria gestfast_carga_test)
 ```
 
@@ -45,9 +46,12 @@ e `GESTFAST_LOG_DIR`.
 | Busca | a barra do topo acha telas e também produtos, requisições, vendas e funcionários (conforme o perfil); atalhos `/` e `Ctrl+K` |
 | Produtos | incluir, alterar, inativar/reativar, filtro por categoria/situação, upload de imagem, validações de preço, código único |
 | Estoque | conferência física com divergência, ajuste automático e histórico; alerta de validade |
-| Requisições | criar, cotar, gerar AF, receber (total ou parcial, com entrada automática no estoque), cancelar com justificativa, histórico |
+| Auditoria do estoque | mapa com a prioridade de conferência de cada produto (nunca conferido, dias sem conferir, divergência na última contagem, ajustes à mão) e extrato do produto com saldo antes/depois de cada movimento (Administrador/BackOffice) |
+| Requisições | criar, cotar, gerar AF, receber (total ou parcial, com entrada automática no estoque), cancelar com justificativa, histórico; **pedido em massa** (vários itens para o mesmo fornecedor, "puxar itens abaixo do mínimo"), **pedidos predefinidos** e **envio pelo WhatsApp** (link wa.me com a mensagem pronta) |
+| Fornecedores | cadastro com nome e WhatsApp (Administrador/BackOffice) |
 | Entradas / Saídas | individual ou **em lote**, com filtro por período |
-| Caixa (PDV) | busca por código de barras, desconto em R$ ou %, limite de desconto configurável, troco, baixa automática de estoque |
+| Vendas e Saídas | tudo o que saiu do estoque numa lista só (vendas, perdas, consumo da produção, saídas manuais, ajustes), com filtro por tipo e produto, resumo por tipo e exportação PDF/Excel |
+| Caixa (PDV) | busca por código de barras, desconto em R$ ou %, limite de desconto configurável, troco, baixa automática de estoque; **pagamento misto** (dividir entre dinheiro, PIX, débito e crédito) |
 | Histórico de vendas | consultar, editar quantidades, cancelar (exige senha de gerente, estorna estoque) e excluir (só Administrador) |
 | Relatórios | faturamento/vendas, estoque (entradas, saídas, saldo), desperdício e **consumo da produção** (insumos gastos e custo do que foi produzido) com filtro de período e categoria; exportação real em **PDF** e **Excel (.xlsx)** |
 | Ficha técnica | receita de cada produto de produção própria (insumos, rendimento, validade do pronto); custo por unidade e margem calculados; o custo do produto passa a ser o da receita |
