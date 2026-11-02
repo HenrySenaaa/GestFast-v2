@@ -9,8 +9,9 @@ Sistema de gestão de estoque e vendas para panificadoras (projeto USCS - ADS). 
    **Banco que já existe** (usado pelo GestFast original): em vez disso, faça um backup e rode só
    `database/migracao-otimizacao.sql`. Ele não apaga dados, pode rodar mais de uma vez, e o GestFast original
    continua funcionando no mesmo banco. Depois rode `database/migracao-etapa3.sql` (produção: tipo de produto,
-   ficha técnica e registro de produção) e, por último, `database/migracao-etapa4.sql` (WhatsApp do fornecedor,
-   pedido em massa, pedidos predefinidos e pagamento misto). Sem essas migrações, a v2 avisa no terminal e não sobe.
+   ficha técnica e registro de produção), `database/migracao-etapa4.sql` (WhatsApp do fornecedor, pedido em massa,
+   pedidos predefinidos e pagamento misto) e, por último, `database/migracao-etapa5.sql` (caixa, etiqueta da balança
+   e venda em espera). Sem essas migrações, a v2 avisa no terminal e não sobe.
 2. **Configurar a conexão**: copiar `.env.example` para `.env` e colocar a senha do seu MySQL.
    O `.env` não vai para o Git.
 3. **Instalar e rodar** (Node 18 ou superior):
@@ -18,7 +19,7 @@ Sistema de gestão de estoque e vendas para panificadoras (projeto USCS - ADS). 
 ```bash
 npm install
 npm start               # http://localhost:3000
-npm test                # 31 testes automatizados da API (cenários do Apêndice F + v2 + etapas 3 e 4)
+npm test                # 34 testes automatizados da API (cenários do Apêndice F + v2 + etapas 3, 4 e 5)
 node test/carga.js      # teste de carga do banco (cria gestfast_carga_test)
 ```
 
@@ -51,7 +52,8 @@ e `GESTFAST_LOG_DIR`.
 | Fornecedores | cadastro com nome e WhatsApp (Administrador/BackOffice) |
 | Entradas / Saídas | individual ou **em lote**, com filtro por período |
 | Vendas e Saídas | tudo o que saiu do estoque numa lista só (vendas, perdas, consumo da produção, saídas manuais, ajustes), com filtro por tipo e produto, resumo por tipo e exportação PDF/Excel |
-| Caixa (PDV) | busca por código de barras, desconto em R$ ou %, limite de desconto configurável, troco, baixa automática de estoque; **pagamento misto** (dividir entre dinheiro, PIX, débito e crédito) |
+| Caixa (PDV) | busca por código de barras, desconto em R$ ou %, limite de desconto configurável, troco, baixa automática de estoque; **pagamento misto** (dividir entre dinheiro, PIX, débito e crédito); **etiqueta da balança** (lê o EAN-13 que começa com 2 e lança o item direto); **venda em espera** (`F6` guarda, `F7` retoma) |
+| Caixa (gaveta) | caixa único da loja: abertura com troco, sangria, reforço e fechamento com esperado × contado; **contagem cega** para o Funcionário; histórico para Administrador/BackOffice |
 | Histórico de vendas | consultar, editar quantidades, cancelar (exige senha de gerente, estorna estoque) e excluir (só Administrador) |
 | Relatórios | faturamento/vendas, estoque (entradas, saídas, saldo), desperdício e **consumo da produção** (insumos gastos e custo do que foi produzido) com filtro de período e categoria; exportação real em **PDF** e **Excel (.xlsx)** |
 | Ficha técnica | receita de cada produto de produção própria (insumos, rendimento, validade do pronto); custo por unidade e margem calculados; o custo do produto passa a ser o da receita |
@@ -65,6 +67,12 @@ e `GESTFAST_LOG_DIR`.
 - Produtos em **UN, Pacote, DZ e Fatia só aceitam quantidades inteiras**; apenas **KG e Lt** aceitam frações (validado no navegador e no servidor).
 - Toda operação que altera estoque é uma transação: se algo falhar, nada é gravado.
 - Falhas externas (operadora de cartão negando, fornecedor fora do ar) podem ser simuladas em Configuração para demonstração.
+- **Caixa:** valor esperado = troco inicial + reforços - sangrias - estornos + dinheiro das vendas concluídas (só a parte em dinheiro do pagamento misto). Fica congelado no fechamento.
+- Sem caixa aberto a venda é recusada, salvo se "Exigir caixa aberto para vender" estiver desligado em Configuração.
+- Venda de um caixa já fechado não pode ser editada nem excluída. Pode ser cancelada: o dinheiro sai do caixa aberto no momento, como estorno.
+- **Contagem cega:** com o caixa aberto, a API não envia esperado nem totais ao Funcionário. A justificativa da diferença é pedida depois de fechar, porque exigi-la antes revelaria que a contagem não bateu. Pelo mesmo motivo, a sangria não tem limite pelo saldo.
+- **Etiqueta da balança:** formato padrão `2 CCCCC VVVVVV D`; peso ou preço e dígitos do código são configuráveis, e o produto precisa ter o "Código na balança". No modo preço, a quantidade tem 3 casas e o total pode diferir da etiqueta em alguns centavos em produto caro.
+- **Venda em espera** não reserva estoque: preço e estoque valem os de quando ela for retomada.
 
 - Na produção, insumo controlado em unidade inteira (UN, DZ, Pacote) é **arredondado para cima** (meia dúzia de ovos vira 1 DZ).
   Para receitas com poucos ovos, cadastre os ovos em UN.
