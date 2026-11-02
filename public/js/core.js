@@ -34,6 +34,9 @@
     const texto = dias < 0 ? `Vencido há ${-dias} dia(s)` : dias === 0 ? 'Vence hoje' : `Vence em ${dias} dia(s)`;
     return { dias, alerta, vencido: dias < 0, texto };
   };
+  // Nome de cada origem de movimentação de estoque (Vendas e Saídas e Auditoria).
+  GF.ORIGENS = { venda: 'Venda', perda: 'Perda / sobra', producao: 'Produção', manual: 'Manual', ajuste: 'Ajuste de venda', conferencia: 'Ajuste de conferência', estorno: 'Estorno', requisicao: 'Requisição' };
+  GF.origem = (o, tipo) => (o === 'producao' && tipo === 'Saída' ? 'Consumo na produção' : o === 'manual' ? `${tipo || 'Movimento'} manual` : GF.ORIGENS[o] || o);
   GF.fractional = un => ['kg', 'lt', 'l'].includes(String(un || '').toLowerCase());
   GF.qtyAttrs = un => (GF.fractional(un) ? { min: '0.001', step: '0.001' } : { min: '1', step: '1' });
   GF.applyQtyAttrs = (input, un) => { const a = GF.qtyAttrs(un); input.min = a.min; input.step = a.step; };
@@ -235,9 +238,11 @@
   const OPCOES = [
     { label: 'Início (Dashboard)', icon: 'home', desc: 'Alertas, compras recentes e distribuição do estoque', view: 'dashboard', k: 'inicio dashboard painel home alertas', perm: 'dashboard:ver' },
     { label: 'Verificar Estoque', icon: 'box', desc: 'Conferência física e divergências', view: 'estoque', k: 'estoque conferencia verificar inventario contagem', perm: 'estoque:conferir' },
+    { label: 'Auditoria do Estoque', icon: 'eye', desc: 'O que conferir primeiro e o extrato de cada produto', view: 'auditoria', k: 'auditoria mapa extrato divergencia conferir ajuste kardex', perm: 'auditoria:ver' },
     { label: 'Requisições de Compra', icon: 'clipboard', desc: 'Pedidos aos fornecedores', view: 'requisicoes', k: 'requisicao requisicoes pedido compra fornecedor', perm: 'requisicoes:ver' },
     { label: 'Cadastro de Produtos', icon: 'tag', desc: 'Incluir, alterar e inativar produtos', view: 'cadastro', k: 'cadastro produto cadastrar novo catalogo', perm: 'produtos:editar' },
     { label: 'Saída de Produtos', icon: 'out', desc: 'Baixas, descartes e perdas', view: 'saidas', k: 'saida saidas baixa descarte perda', perm: 'movimentos:ver' },
+    { label: 'Vendas e Saídas', icon: 'history', desc: 'Tudo o que saiu do estoque numa lista só', view: 'vendas-saidas', k: 'vendas saidas saida baixa consumo perda lista geral', perm: 'movimentos:ver' },
     { label: 'Entrada de Produtos', icon: 'in', desc: 'Recebimentos e reposição', view: 'entradas', k: 'entrada entradas recebimento reposicao', perm: 'movimentos:ver' },
     { label: 'Ficha Técnica', icon: 'book', desc: 'Receitas, custo e margem dos produtos da casa', view: 'fichas', k: 'ficha tecnica receita custo margem insumo rendimento', perm: 'producao:ver' },
     { label: 'Produção', icon: 'flame', desc: 'Registrar fornadas com baixa dos insumos', view: 'producao', k: 'producao produzir fornada assar insumos', perm: 'producao:ver' },

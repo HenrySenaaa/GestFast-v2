@@ -60,10 +60,24 @@ function validarTexto(valor, rotulo, { obrigatorio = false, min = 10, max = 5000
   return t;
 }
 
+// WhatsApp: aceita "(11) 91234-5678", "11912345678" ou "+55 11 91234-5678"; guarda "5511912345678". Vazio = sem número.
+function normalizarWhatsapp(v) {
+  const d = txt(v).replace(/\D/g, '');
+  if (!d) return null;
+  if (d.length === 10 || d.length === 11) return `55${d}`;
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) return d;
+  throw erro('WhatsApp inválido: informe DDD + número (ex.: 11 91234-5678).');
+}
+
 const FORMAS_PAGAMENTO = ['Dinheiro', 'Cartão Débito', 'Cartão Crédito', 'PIX'];
 const SITUACOES_ABERTAS = ['Em Aberto', 'Cotado', 'AF Gerada'];
 const MOTIVOS_PERDA = ['Vencido', 'Quebra/Avaria', 'Sobra do dia', 'Outro'];
 const TIPOS_PRODUTO = ['Revenda', 'Produção', 'Insumo']; // Insumo não é vendido no caixa
+const ORIGENS_MOV = ['manual', 'venda', 'requisicao', 'conferencia', 'estorno', 'ajuste', 'perda', 'producao'];
+// Mexidas à mão que a auditoria olha primeiro. Entrada manual não conta: é o recebimento de mercadoria sem requisição.
+const ORIGENS_AJUSTE = ['ajuste', 'conferencia', 'estorno'];
+const ehAjuste = (origem, tipo) => ORIGENS_AJUSTE.includes(origem) || (origem === 'manual' && tipo === 'Saída');
+const SQL_EH_AJUSTE = "(origem IN ('ajuste', 'conferencia', 'estorno') OR (origem = 'manual' AND tipo_movimentacao = 'Saída'))";
 
 // ------------------------------------------------------------------ consultas e conversões de linhas
 const SQL_USUARIO = 'SELECT u.*, p.nome_perfil FROM usuario u JOIN perfil p ON p.id_perfil = u.id_perfil';
@@ -90,11 +104,13 @@ const SQL_VENDA = `SELECT v.*, u.nome AS usuario_nome, uc.nome AS cancelada_por_
   LEFT JOIN usuario ua ON ua.id_usuario = v.autorizada_por
   LEFT JOIN usuario ue ON ue.id_usuario = v.editada_por`;
 
-function mapVenda(v, itens) {
+// `pagamentos`: as partes de uma venda 'Misto'; numa venda de forma única, uma parte com o total.
+function mapVenda(v, itens, partes) {
   const o = {
     id_venda: v.id_venda, codigo_venda: v.codigo_venda, data_venda: hm(v.data_venda), valor_subtotal: v.valor_subtotal,
     desconto: v.desconto, desconto_tipo: v.desconto_tipo, desconto_informado: v.desconto_informado, valor_total: v.valor_total,
     forma_pagamento: v.forma_pagamento, valor_recebido: v.valor_recebido, troco: v.troco, nsu: v.nsu,
+    pagamentos: v.forma_pagamento === 'Misto' ? (partes || []) : [{ forma_pagamento: v.forma_pagamento, valor: v.valor_total, nsu: v.nsu }],
     status_venda: v.status_venda, id_usuario: v.id_usuario, usuario_nome: v.usuario_nome, itens
   };
   if (v.status_venda === 'Cancelada') {
@@ -118,7 +134,7 @@ const mapProducao = r => ({
   ...(r.status === 'Estornada' ? { estornada_por: r.estornada_por_nome, data_estorno: hm(r.data_estorno), motivo_estorno: r.motivo_estorno } : {})
 });
 
-const SQL_REQ = `SELECT r.*, f.nome AS fornecedor FROM requisicao r JOIN fornecedor f ON f.id_fornecedor = r.id_fornecedor`;
+const SQL_REQ = `SELECT r.*, f.nome AS fornecedor, f.whatsapp AS fornecedor_whatsapp FROM requisicao r JOIN fornecedor f ON f.id_fornecedor = r.id_fornecedor`;
 
 class Database {
   constructor() {
@@ -142,6 +158,9 @@ class Database {
     const [fichas] = await pool.query(
       "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'ficha_tecnica'");
     if (!fichas.length) throw erro('O banco ainda não tem as tabelas de produção (etapa 3). Rode database/migracao-etapa3.sql no MySQL Workbench.', 500);
+    const [etapa4] = await pool.query(
+      "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'venda_pagamento'");
+    if (!etapa4.length) throw erro('O banco ainda não tem as tabelas da etapa 4 (pedido em massa e pagamento misto). Rode database/migracao-etapa4.sql no MySQL Workbench.', 500);
   }
 
   // Transação: roda fn(conn); no fim atualiza os alertas de estoque; erro = rollback de tudo.
@@ -162,6 +181,36 @@ class Database {
   async listFornecedores(c = pool) {
     const [rows] = await c.query('SELECT nome FROM fornecedor ORDER BY id_fornecedor');
     return rows.map(r => r.nome);
+  }
+
+  // Com o WhatsApp (tela de fornecedores e botão "Enviar pelo WhatsApp").
+  async listFornecedoresDetalhe(c = pool) {
+    const [rows] = await c.query('SELECT id_fornecedor, nome, whatsapp FROM fornecedor ORDER BY nome');
+    return rows.map(r => ({ ...r, whatsapp: r.whatsapp || '' }));
+  }
+
+  async fornecedorPorNome(c, nome) {
+    const [rows] = await c.query('SELECT id_fornecedor FROM fornecedor WHERE nome = ?', [txt(nome)]);
+    if (!txt(nome) || !rows.length) throw erro('Selecione um fornecedor da lista.');
+    return rows[0].id_fornecedor;
+  }
+
+  // Cria (id vazio) ou altera um fornecedor. O WhatsApp é guardado só com dígitos e o DDI 55.
+  saveFornecedor(id, data) {
+    return this.tx(async c => {
+      const nome = txt(data.nome);
+      if (nome.length < 2 || nome.length > 150) throw erro('O nome do fornecedor deve ter entre 2 e 150 caracteres.');
+      const whats = normalizarWhatsapp(data.whatsapp);
+      const [dup] = await c.query('SELECT id_fornecedor FROM fornecedor WHERE nome = ? AND id_fornecedor <> ?', [nome, idNum(id)]);
+      if (dup.length) throw erro('Já existe um fornecedor com esse nome.');
+      if (id) {
+        const [r] = await c.query('UPDATE fornecedor SET nome = ?, whatsapp = ? WHERE id_fornecedor = ?', [nome, whats, idNum(id)]);
+        if (!r.affectedRows) throw erro('Fornecedor não encontrado.', 404);
+        return { id_fornecedor: idNum(id), nome, whatsapp: whats || '' };
+      }
+      const [r] = await c.query('INSERT INTO fornecedor (nome, whatsapp) VALUES (?, ?)', [nome, whats]);
+      return { id_fornecedor: r.insertId, nome, whatsapp: whats || '' };
+    });
   }
 
   async listPerfis(c = pool) {
@@ -636,7 +685,7 @@ class Database {
     hist.forEach(h => porReq.get(h.id_requisicao).push({ data: hm(h.data_registro), situacao: h.situacao, usuario: h.usuario || '-' }));
     return rows.map(r => {
       const { id_fornecedor, numero_pedido, ...resto } = r;
-      return { ...resto, observacao: r.observacao || '', historico: porReq.get(r.id_requisicao) };
+      return { ...resto, observacao: r.observacao || '', fornecedor_whatsapp: r.fornecedor_whatsapp || '', historico: porReq.get(r.id_requisicao) };
     });
   }
 
@@ -661,37 +710,129 @@ class Database {
       [idReq, dataHora(), situacao, ator ? ator.id_usuario : null]);
   }
 
+  // Previsão de entrega, observação e endereço valem para o pedido inteiro (um item ou vários).
+  dadosComunsPedido(data) {
+    const prev = txt(data.previsao_entrega) || dataISO(deslocar(4));
+    if (!DATA_RE.test(prev) || prev < dataISO()) throw erro('A previsão de entrega deve ser uma data a partir de hoje.');
+    const obs = validarTexto(data.observacao, 'A observação da requisição', { min: 10, max: 5000 });
+    return { prev, obs, endereco: txt(data.endereco_entrega) || 'Padrão - Padaria Nova York' };
+  }
+
+  // Valida um item e grava a requisição "Em Aberto" na transação `c`. Devolve o id criado.
+  async inserirRequisicao(c, item, idFornecedor, comum, ator, grupo = null) {
+    const prod = item.id_produto ? await this.getProductById(item.id_produto, c) : null;
+    if (item.id_produto && !prod) throw erro('Produto não encontrado.', 404);
+    const nomeProd = prod ? prod.nome_produto : txt(item.produto_nome);
+    if (!nomeProd) throw erro('O nome do produto é obrigatório.');
+    const qtd = Number(item.quantidade_pedida);
+    if (!Number.isFinite(qtd) || qtd <= 0) throw erro(`A quantidade pedida de "${nomeProd}" deve ser maior que zero.`);
+    const un = prod ? prod.unidade : (txt(item.unidade) || 'UN');
+    if (!aceitaFracao(un) && !Number.isInteger(qtd)) throw erro(`A unidade ${un} só aceita quantidades inteiras ("${nomeProd}").`);
+    const vu = item.valor_unitario === '' || item.valor_unitario === undefined || item.valor_unitario === null ? (prod ? prod.preco_custo : 0) : Number(item.valor_unitario);
+    if (!Number.isFinite(vu) || vu < 0) throw erro(`O preço unitário de "${nomeProd}" é inválido.`);
+    // Código = maior número existente + 1 (não depende do id, que pode pular).
+    // numero_pedido é calculado e indexado pelo banco: o MAX sai do índice e trava só o fim dele.
+    const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao FOR UPDATE');
+    const [r] = await c.query(
+      `INSERT INTO requisicao (codigo_pedido, pedido_grupo, id_fornecedor, id_produto, produto_nome, quantidade_pedida, quantidade_atendida, unidade,
+         valor_unitario, valor_total, situacao, data_pedido, previsao_entrega, endereco_entrega, observacao)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'Em Aberto', ?, ?, ?, ?)`,
+      [`REQ-${Number(mx.n) + 1}`, grupo, idFornecedor, prod ? prod.id_produto : null, nomeProd, r3(qtd), un, r2(vu), r2(qtd * vu),
+        dataISO(), comum.prev, comum.endereco, comum.obs]
+    );
+    await this.registrarHistorico(c, r.insertId, 'Em Aberto', ator);
+    return r.insertId;
+  }
+
   createRequisicao(data, ator) {
     return this.tx(async c => {
-      const [forn] = await c.query('SELECT id_fornecedor FROM fornecedor WHERE nome = ?', [txt(data.fornecedor)]);
-      if (!data.fornecedor || !forn.length) throw erro('Selecione um fornecedor da lista.');
-      const prod = data.id_produto ? await this.getProductById(data.id_produto, c) : null;
-      if (data.id_produto && !prod) throw erro('Produto não encontrado.', 404);
-      const nomeProd = prod ? prod.nome_produto : txt(data.produto_nome);
-      if (!nomeProd) throw erro('O nome do produto é obrigatório.');
-      const qtd = Number(data.quantidade_pedida);
-      if (!Number.isFinite(qtd) || qtd <= 0) throw erro('A quantidade pedida deve ser maior que zero.');
-      const un = prod ? prod.unidade : (txt(data.unidade) || 'UN');
-      if (!aceitaFracao(un) && !Number.isInteger(qtd)) throw erro(`A unidade ${un} só aceita quantidades inteiras.`);
-      const vu = data.valor_unitario === '' || data.valor_unitario === undefined ? (prod ? prod.preco_custo : 0) : Number(data.valor_unitario);
-      if (!Number.isFinite(vu) || vu < 0) throw erro('O preço unitário é inválido.');
-      const prev = txt(data.previsao_entrega) || dataISO(deslocar(4));
-      if (!DATA_RE.test(prev) || prev < dataISO()) throw erro('A previsão de entrega deve ser uma data a partir de hoje.');
-      const obs = validarTexto(data.observacao, 'A observação da requisição', { min: 10, max: 5000 });
+      const idForn = await this.fornecedorPorNome(c, data.fornecedor);
+      const comum = this.dadosComunsPedido(data);
+      const id = await this.inserirRequisicao(c, data, idForn, comum, ator);
       gateways.comunicarFornecedor('PEDIDO', data, await this.getSettings(c));
-      // Código = maior número existente + 1 (não depende do id, que pode pular).
-      // numero_pedido é calculado e indexado pelo banco: o MAX sai do índice e trava só o fim dele.
-      const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao FOR UPDATE');
-      const [r] = await c.query(
-        `INSERT INTO requisicao (codigo_pedido, id_fornecedor, id_produto, produto_nome, quantidade_pedida, quantidade_atendida, unidade,
-           valor_unitario, valor_total, situacao, data_pedido, previsao_entrega, endereco_entrega, observacao)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 'Em Aberto', ?, ?, ?, ?)`,
-        [`REQ-${Number(mx.n) + 1}`, forn[0].id_fornecedor, prod ? prod.id_produto : null, nomeProd, r3(qtd), un, r2(vu), r2(qtd * vu),
-          dataISO(), prev, txt(data.endereco_entrega) || 'Padrão - Padaria Nova York', obs]
-      );
-      await this.registrarHistorico(c, r.insertId, 'Em Aberto', ator);
-      return this.getRequisicao(r.insertId, c);
+      return this.getRequisicao(id, c);
     });
+  }
+
+  // Pedido em massa: vários itens do catálogo para o mesmo fornecedor, numa transação só. Cada item vira uma
+  // requisição (o recebimento continua item a item) e todas levam o mesmo código de pedido (PED-<1º número>).
+  createPedidoEmMassa(data, ator) {
+    return this.tx(async c => {
+      const idForn = await this.fornecedorPorNome(c, data.fornecedor);
+      const itens = Array.isArray(data.itens) ? data.itens : [];
+      if (!itens.length) throw erro('Inclua ao menos um item no pedido.');
+      if (itens.length > 100) throw erro('Um pedido pode ter no máximo 100 itens.');
+      const vistos = new Set();
+      for (const it of itens) {
+        if (!idNum(it.id_produto)) throw erro('No pedido em massa, todos os itens precisam ser produtos do catálogo.');
+        if (vistos.has(idNum(it.id_produto))) throw erro('Há produto repetido no pedido: junte as quantidades numa linha só.');
+        vistos.add(idNum(it.id_produto));
+      }
+      const comum = this.dadosComunsPedido(data);
+      const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao FOR UPDATE');
+      const grupo = `PED-${Number(mx.n) + 1}`;
+      const ids = [];
+      for (const it of itens) ids.push(await this.inserirRequisicao(c, it, idForn, comum, ator, grupo));
+      gateways.comunicarFornecedor('PEDIDO', data, await this.getSettings(c));
+      const [rows] = await c.query(`${SQL_REQ} WHERE r.id_requisicao IN (?) ORDER BY r.id_requisicao`, [ids]);
+      const requisicoes = await this.montarRequisicoes(rows, c);
+      return { pedido_grupo: grupo, valor_total: r2(requisicoes.reduce((s, r) => s + r.valor_total, 0)), requisicoes };
+    });
+  }
+
+  // ---------------------------------------------------------------- pedidos predefinidos (modelos)
+  async listModelos(c = pool) {
+    const [modelos] = await c.query(
+      `SELECT m.id_modelo, m.nome, m.observacao, m.atualizado_em, m.id_fornecedor, f.nome AS fornecedor
+       FROM pedido_modelo m JOIN fornecedor f ON f.id_fornecedor = m.id_fornecedor ORDER BY m.nome`);
+    if (!modelos.length) return [];
+    const [itens] = await c.query(
+      `SELECT i.id_modelo, i.id_produto, i.quantidade, p.nome_produto, p.unidade, p.preco_custo, p.quantidade_estoque, p.estoque_minimo, p.status
+       FROM item_pedido_modelo i JOIN produto p ON p.id_produto = i.id_produto
+       WHERE i.id_modelo IN (?) ORDER BY p.nome_produto`, [modelos.map(m => m.id_modelo)]);
+    return modelos.map(m => ({
+      ...m, observacao: m.observacao || '', atualizado_em: hm(m.atualizado_em),
+      itens: itens.filter(i => i.id_modelo === m.id_modelo).map(({ id_modelo, ...i }) => i)
+    }));
+  }
+
+  // Cria (id vazio) ou substitui um modelo: nome, fornecedor e a lista de itens com a quantidade de sempre.
+  saveModelo(id, data, ator) {
+    return this.tx(async c => {
+      const nome = txt(data.nome);
+      if (nome.length < 3 || nome.length > 80) throw erro('O nome do pedido predefinido deve ter entre 3 e 80 caracteres.');
+      const idForn = await this.fornecedorPorNome(c, data.fornecedor);
+      const itens = Array.isArray(data.itens) ? data.itens : [];
+      if (!itens.length) throw erro('Inclua ao menos um item no pedido predefinido.');
+      const linhas = new Map();
+      for (const it of itens) {
+        const prod = await this.getProductById(it.id_produto, c);
+        if (!prod) throw erro('Produto não encontrado.', 404);
+        if (linhas.has(prod.id_produto)) throw erro(`"${prod.nome_produto}" aparece mais de uma vez no pedido predefinido.`);
+        linhas.set(prod.id_produto, validarQuantidade(prod, it.quantidade));
+      }
+      const obs = validarTexto(data.observacao, 'A observação', { min: 10, max: 5000 });
+      const [dup] = await c.query('SELECT id_modelo FROM pedido_modelo WHERE nome = ? AND id_modelo <> ?', [nome, idNum(id)]);
+      if (dup.length) throw erro('Já existe um pedido predefinido com esse nome.');
+      let idModelo = idNum(id);
+      if (idModelo) {
+        const [r] = await c.query('UPDATE pedido_modelo SET nome = ?, id_fornecedor = ?, observacao = ?, atualizado_em = ?, id_usuario = ? WHERE id_modelo = ?',
+          [nome, idForn, obs || null, dataHora(), ator.id_usuario, idModelo]);
+        if (!r.affectedRows) throw erro('Pedido predefinido não encontrado.', 404);
+        await c.query('DELETE FROM item_pedido_modelo WHERE id_modelo = ?', [idModelo]);
+      } else {
+        const [r] = await c.query('INSERT INTO pedido_modelo (nome, id_fornecedor, observacao, atualizado_em, id_usuario) VALUES (?, ?, ?, ?, ?)',
+          [nome, idForn, obs || null, dataHora(), ator.id_usuario]);
+        idModelo = r.insertId;
+      }
+      await c.query('INSERT INTO item_pedido_modelo (id_modelo, id_produto, quantidade) VALUES ?', [[...linhas].map(([idp, q]) => [idModelo, idp, q])]);
+      return (await this.listModelos(c)).find(m => m.id_modelo === idModelo);
+    });
+  }
+
+  async deleteModelo(id) {
+    const [r] = await pool.query('DELETE FROM pedido_modelo WHERE id_modelo = ?', [idNum(id)]);
+    if (!r.affectedRows) throw erro('Pedido predefinido não encontrado.', 404);
   }
 
   updateRequisicaoStatus(id, body, ator) {
@@ -816,19 +957,34 @@ class Database {
     return movs;
   }
 
-  filtroMovimentacoes({ tipo, from, to }) {
+  // `origem` e `id_produto` alimentam a tela Vendas e Saídas (todas as saídas numa lista só).
+  filtroMovimentacoes({ tipo, from, to, origem, id_produto }) {
     const where = [], params = [];
     if (tipo) { where.push('m.tipo_movimentacao = ?'); params.push(tipo); }
     if (from) { where.push('m.data_movimentacao >= ?'); params.push(`${from} 00:00:00`); }
     if (to) { where.push('m.data_movimentacao <= ?'); params.push(`${to} 23:59:59`); }
+    if (origem) {
+      if (!ORIGENS_MOV.includes(origem)) throw erro('Origem de movimentação inválida.');
+      where.push('m.origem = ?'); params.push(origem);
+    }
+    if (id_produto) { where.push('m.id_produto = ?'); params.push(idNum(id_produto)); }
     return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', params };
   }
 
   // Sem `limite` devolve tudo (como antes); com `limite`/`offset` devolve só a página pedida.
-  async getMovimentacoes({ tipo, from, to, limite, offset } = {}) {
-    const f = this.filtroMovimentacoes({ tipo, from, to });
+  async getMovimentacoes({ tipo, from, to, origem, id_produto, limite, offset } = {}) {
+    const f = this.filtroMovimentacoes({ tipo, from, to, origem, id_produto });
     const [rows] = await pool.query(listagem(SQL_MOV, 'movimentacao_estoque m', f.sql, 'm.id_movimentacao DESC', paginar(limite, offset)), f.params);
     return rows.map(mapMov);
+  }
+
+  // Quantos registros e quanto em R$ saiu por origem (venda, perda, produção...), no filtro inteiro.
+  async resumoPorOrigem(filtros = {}) {
+    const f = this.filtroMovimentacoes(filtros);
+    const [rows] = await pool.query(
+      `SELECT m.origem, COUNT(*) AS n, COALESCE(SUM(m.quantidade * m.valor_unitario), 0) AS valor
+       FROM movimentacao_estoque m${f.sql} GROUP BY m.origem ORDER BY valor DESC`, f.params);
+    return rows.map(r => ({ origem: r.origem, registros: Number(r.n), valor: r2(r.valor) }));
   }
 
   // Total de registros e valor somado de TODO o filtro (não só da página), para o resumo da tela.
@@ -867,11 +1023,22 @@ class Database {
     return mapa;
   }
 
+  // Partes do pagamento das vendas 'Misto' (as de forma única não têm linhas em venda_pagamento).
+  async pagamentosDasVendas(vendas, c = pool) {
+    const ids = vendas.filter(v => v.forma_pagamento === 'Misto').map(v => v.id_venda);
+    const mapa = new Map(ids.map(id => [id, []]));
+    if (!ids.length) return mapa;
+    const [rows] = await c.query(
+      'SELECT id_venda, forma_pagamento, valor, nsu FROM venda_pagamento WHERE id_venda IN (?) ORDER BY id_venda_pagamento', [ids]);
+    rows.forEach(({ id_venda, ...p }) => mapa.get(id_venda).push(p));
+    return mapa;
+  }
+
   async getVenda(id, c = pool, lock = false) {
     const [rows] = await c.query(`${SQL_VENDA} WHERE v.id_venda = ?${lock ? ' FOR UPDATE' : ''}`, [idNum(id)]);
     if (!rows[0]) return undefined;
-    const itens = await this.itensDasVendas([rows[0].id_venda], c);
-    return mapVenda(rows[0], itens.get(rows[0].id_venda));
+    const [itens, partes] = await Promise.all([this.itensDasVendas([rows[0].id_venda], c), this.pagamentosDasVendas(rows, c)]);
+    return mapVenda(rows[0], itens.get(rows[0].id_venda), partes.get(rows[0].id_venda));
   }
 
   // O filtro usa só colunas de `venda`: vendedor e produto viram subconsultas não correlacionadas
@@ -884,9 +1051,10 @@ class Database {
     if (txt(q)) {
       const t = like(txt(q));
       where.push(`(v.codigo_venda LIKE ? OR v.forma_pagamento LIKE ?
+        OR v.id_venda IN (SELECT vp.id_venda FROM venda_pagamento vp WHERE vp.forma_pagamento LIKE ?)
         OR v.id_usuario IN (SELECT id_usuario FROM usuario WHERE nome LIKE ?)
         OR v.id_venda IN (SELECT i.id_venda FROM item_venda i JOIN produto p ON p.id_produto = i.id_produto WHERE p.nome_produto LIKE ?))`);
-      params.push(t, t, t, t);
+      params.push(t, t, t, t, t);
     }
     return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', params };
   }
@@ -895,8 +1063,8 @@ class Database {
   async getVendas({ from, to, q, status, limite, offset } = {}) {
     const f = this.filtroVendas({ from, to, q, status });
     const [rows] = await pool.query(listagem(SQL_VENDA, 'venda v', f.sql, 'v.id_venda DESC', paginar(limite, offset)), f.params);
-    const itens = await this.itensDasVendas(rows.map(v => v.id_venda));
-    return rows.map(v => mapVenda(v, itens.get(v.id_venda)));
+    const [itens, partes] = await Promise.all([this.itensDasVendas(rows.map(v => v.id_venda)), this.pagamentosDasVendas(rows)]);
+    return rows.map(v => mapVenda(v, itens.get(v.id_venda), partes.get(v.id_venda)));
   }
 
   // Total de vendas e faturamento (só as concluídas) de TODO o filtro, para o resumo da tela.
@@ -918,7 +1086,8 @@ class Database {
       const itens = Array.isArray(data.itens) ? data.itens : [];
       if (!itens.length) throw erro('Nenhum item inserido na venda.');
       const forma = data.forma_pagamento || 'Dinheiro';
-      if (!FORMAS_PAGAMENTO.includes(forma)) throw erro('Forma de pagamento inválida.');
+      const misto = forma === 'Misto';
+      if (!misto && !FORMAS_PAGAMENTO.includes(forma)) throw erro('Forma de pagamento inválida.');
       const cfg = await this.getSettings(c);
 
       const produtos = new Map();
@@ -957,13 +1126,21 @@ class Database {
       const desc = this.resolverDesconto(subtotal, data, ator, cfg);
       const total = r2(subtotal - desc.valor);
 
-      let recebido = null, troco = null;
-      if (forma === 'Dinheiro' && data.valor_recebido !== undefined && data.valor_recebido !== '' && data.valor_recebido !== null) {
-        recebido = Number(data.valor_recebido);
-        if (!Number.isFinite(recebido) || recebido < total) throw erro('O valor recebido é menor que o total da venda.');
-        troco = r2(recebido - total);
+      const temRecebido = data.valor_recebido !== undefined && data.valor_recebido !== '' && data.valor_recebido !== null;
+      let recebido = null, troco = null, partes = null, nsu = null;
+      if (misto) {
+        // Cada parte de cartão é autorizada separadamente; o troco sai só da parte em dinheiro.
+        ({ partes, recebido, troco } = this.validarPagamentoMisto(data.pagamentos, total, temRecebido ? data.valor_recebido : null));
+        for (const p of partes) p.nsu = p.forma_pagamento.startsWith('Cartão') ? gateways.autorizarPagamento(p.forma_pagamento, p.valor, cfg).nsu : null;
+      } else {
+        if (forma === 'Dinheiro' && temRecebido) {
+          recebido = Number(data.valor_recebido);
+          if (!Number.isFinite(recebido) || recebido < total) throw erro('O valor recebido é menor que o total da venda.');
+          troco = r2(recebido - total);
+        }
+        const aut = gateways.autorizarPagamento(forma, total, cfg);
+        if (forma.startsWith('Cartão')) nsu = aut.nsu;
       }
-      const aut = gateways.autorizarPagamento(forma, total, cfg);
 
       // Código provisório; depois vira VENDA-(1000 + id), como na versão anterior.
       const [r] = await c.query(
@@ -971,11 +1148,15 @@ class Database {
            forma_pagamento, valor_recebido, troco, nsu, status_venda, id_usuario)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Concluída', ?)`,
         [`TMP-${auth.newToken().slice(0, 12)}`, dataHora(), subtotal, desc.valor, desc.tipo, Number(data.desconto) || 0, total, forma,
-          recebido, troco, forma.startsWith('Cartão') ? aut.nsu : null, ator.id_usuario]
+          recebido, troco, nsu, ator.id_usuario]
       );
       const codigo = `VENDA-${1000 + r.insertId}`;
       await c.query('UPDATE venda SET codigo_venda = ? WHERE id_venda = ?', [codigo, r.insertId]);
       await this.gravarItensVenda(c, r.insertId, itensProc);
+      if (partes) {
+        await c.query('INSERT INTO venda_pagamento (id_venda, forma_pagamento, valor, nsu) VALUES ?',
+          [partes.map(p => [r.insertId, p.forma_pagamento, p.valor, p.nsu])]);
+      }
 
       for (const [idp, q] of totalPorProduto) {
         const p = produtos.get(idp);
@@ -986,6 +1167,33 @@ class Database {
       }
       return this.getVenda(r.insertId, c);
     });
+  }
+
+  // Pagamento misto: duas formas ou mais, sem repetir, cada uma com valor > 0 e somando exatamente o total.
+  // `recebido` (opcional) é o dinheiro entregue pelo cliente: precisa cobrir a parte em dinheiro.
+  validarPagamentoMisto(pagamentos, total, recebidoInformado) {
+    const lista = Array.isArray(pagamentos) ? pagamentos : [];
+    if (lista.length < 2) throw erro('No pagamento misto, informe ao menos duas formas de pagamento.');
+    const vistas = new Set();
+    const partes = lista.map(p => {
+      const forma = p && p.forma_pagamento;
+      if (!FORMAS_PAGAMENTO.includes(forma)) throw erro('Forma de pagamento inválida no pagamento misto.');
+      if (vistas.has(forma)) throw erro(`A forma "${forma}" aparece mais de uma vez no pagamento misto.`);
+      vistas.add(forma);
+      const valor = Number(p.valor);
+      if (!Number.isFinite(valor) || valor <= 0) throw erro(`Informe um valor maior que zero para "${forma}".`);
+      return { forma_pagamento: forma, valor: r2(valor) };
+    });
+    const soma = r2(partes.reduce((s, p) => s + p.valor, 0));
+    if (soma !== r2(total)) throw erro(`A soma das formas de pagamento (R$ ${soma.toFixed(2)}) deve ser igual ao total da venda (R$ ${r2(total).toFixed(2)}).`);
+    const dinheiro = partes.find(p => p.forma_pagamento === 'Dinheiro');
+    let recebido = null, troco = null;
+    if (dinheiro && recebidoInformado !== null) {
+      recebido = Number(recebidoInformado);
+      if (!Number.isFinite(recebido) || recebido < dinheiro.valor) throw erro('O valor recebido em dinheiro é menor que a parte em dinheiro.');
+      troco = r2(recebido - dinheiro.valor);
+    }
+    return { partes, recebido, troco };
   }
 
   async estornarItensVenda(c, venda, ator, motivo) {
@@ -1059,8 +1267,21 @@ class Database {
       const desc = this.resolverDesconto(subtotal, { desconto_tipo: venda.desconto_tipo, desconto: venda.desconto_tipo === 'percentual' ? venda.desconto_informado : Math.min(venda.desconto, subtotal) }, ator, await this.getSettings(c));
       await c.query('DELETE FROM item_venda WHERE id_venda = ?', [venda.id_venda]);
       await this.gravarItensVenda(c, venda.id_venda, itensNovos);
+      const novoTotal = r2(subtotal - desc.valor);
       await c.query('UPDATE venda SET valor_subtotal = ?, desconto = ?, valor_total = ?, editada_por = ?, data_edicao = ? WHERE id_venda = ?',
-        [subtotal, desc.valor, r2(subtotal - desc.valor), ator.id_usuario, dataHora(), venda.id_venda]);
+        [subtotal, desc.valor, novoTotal, ator.id_usuario, dataHora(), venda.id_venda]);
+      // Pagamento misto: as partes acompanham o novo total na mesma proporção (a última fica com o arredondamento).
+      if (venda.forma_pagamento === 'Misto' && novoTotal !== venda.valor_total) {
+        if (novoTotal <= 0) throw erro('Uma venda com pagamento misto não pode ficar com total zero. Para anulá-la, use o cancelamento.');
+        const partes = venda.pagamentos;
+        let resto = novoTotal;
+        for (let i = 0; i < partes.length; i++) {
+          const valor = i === partes.length - 1 ? r2(resto) : r2(partes[i].valor * novoTotal / venda.valor_total);
+          resto = r2(resto - valor);
+          if (valor <= 0) throw erro('Com o novo total, uma das partes do pagamento misto ficaria zerada. Cancele a venda e lance de novo.');
+          await c.query('UPDATE venda_pagamento SET valor = ? WHERE id_venda = ? AND forma_pagamento = ?', [valor, venda.id_venda, partes[i].forma_pagamento]);
+        }
+      }
       return this.getVenda(venda.id_venda, c);
     });
   }
@@ -1136,6 +1357,93 @@ class Database {
     return this.getProducts(null, null, 'Ativo');
   }
 
+  // ---------------------------------------------------------------- mapa de auditoria do estoque
+  // Diz o que conferir primeiro: produto nunca conferido ou há muito tempo sem conferência, divergência na
+  // última contagem e muitos ajustes à mão (saída manual, ajuste de venda, ajuste de conferência, estorno).
+  async getMapaAuditoria({ dias = 30 } = {}) {
+    const d = Math.trunc(Number(dias));
+    if (!(d >= 1 && d <= 365)) throw erro('O período deve ser de 1 a 365 dias.');
+    const desde = dataHora(deslocar(-d));
+    const [[prods], [confs], [ultimas], [ajustes]] = await Promise.all([
+      pool.query("SELECT id_produto, nome_produto, codigo_barras, unidade, tipo, quantidade_estoque, preco_custo FROM produto WHERE status = 'Ativo' ORDER BY nome_produto"),
+      pool.query(`SELECT i.id_produto, COUNT(*) AS n, MAX(c.data_conferencia) AS ultima
+        FROM item_conferencia i JOIN conferencia c ON c.id_conferencia = i.id_conferencia GROUP BY i.id_produto`),
+      pool.query(`SELECT i.id_produto, i.divergencia FROM item_conferencia i
+        JOIN (SELECT id_produto, MAX(id_item_conferencia) AS id FROM item_conferencia GROUP BY id_produto) u ON u.id = i.id_item_conferencia`),
+      pool.query(`SELECT id_produto, COUNT(*) AS n, COALESCE(SUM(quantidade * valor_unitario), 0) AS valor FROM movimentacao_estoque
+        WHERE ${SQL_EH_AJUSTE} AND data_movimentacao >= ? GROUP BY id_produto`, [desde])
+    ]);
+    const confDe = new Map(confs.map(c => [c.id_produto, c]));
+    const divDe = new Map(ultimas.map(u => [u.id_produto, u.divergencia]));
+    const ajDe = new Map(ajustes.map(a => [a.id_produto, a]));
+    const hoje = Date.parse(dataISO());
+    const itens = prods.map(p => {
+      const c = confDe.get(p.id_produto), aj = ajDe.get(p.id_produto);
+      const diasSem = c ? Math.max(0, Math.round((hoje - Date.parse(String(c.ultima).slice(0, 10))) / 86400000)) : null;
+      const div = c ? divDe.get(p.id_produto) : null;
+      const nAj = aj ? Number(aj.n) : 0;
+      const motivos = [];
+      let pontos = 0;
+      if (!c) { pontos += 3; motivos.push('Nunca conferido'); }
+      else if (diasSem > 30) { pontos += 2; motivos.push(`${diasSem} dias sem conferir`); }
+      else if (diasSem > 14) { pontos += 1; motivos.push(`${diasSem} dias sem conferir`); }
+      if (div) {
+        const valor = r2(Math.abs(div) * p.preco_custo);
+        pontos += valor >= 20 ? 3 : 2;
+        motivos.push(`Divergência de ${div > 0 ? '+' : ''}${div} ${p.unidade} na última conferência`);
+      }
+      if (nAj >= 3) { pontos += 2; motivos.push(`${nAj} ajustes à mão em ${d} dias`); }
+      else if (nAj) { pontos += 1; motivos.push(`${nAj} ajuste(s) à mão em ${d} dias`); }
+      return {
+        id_produto: p.id_produto, nome_produto: p.nome_produto, codigo_barras: p.codigo_barras, unidade: p.unidade, tipo: p.tipo,
+        quantidade_estoque: p.quantidade_estoque, conferencias: c ? Number(c.n) : 0, ultima_conferencia: c ? hm(c.ultima) : null,
+        dias_sem_conferir: diasSem, divergencia_ultima: div, valor_divergencia_ultima: div ? r2(Math.abs(div) * p.preco_custo) : 0,
+        ajustes: nAj, valor_ajustes: aj ? r2(aj.valor) : 0,
+        pontos, prioridade: pontos >= 4 ? 'Alta' : pontos >= 2 ? 'Média' : 'Baixa', motivos
+      };
+    }).sort((a, b) => b.pontos - a.pontos || b.valor_divergencia_ultima - a.valor_divergencia_ultima || a.nome_produto.localeCompare(b.nome_produto));
+    const conta = pr => itens.filter(i => i.prioridade === pr).length;
+    return {
+      dias: d, itens,
+      resumo: { alta: conta('Alta'), media: conta('Média'), baixa: conta('Baixa'), nuncaConferidos: itens.filter(i => !i.conferencias).length }
+    };
+  }
+
+  // Extrato de um produto: cada movimento com o saldo antes e depois, do mais recente para o mais antigo.
+  // O saldo é refeito de trás para frente a partir do estoque atual, então bate com o que o sistema mostra hoje.
+  async getExtratoProduto(id, { from, to, limite = 300 } = {}) {
+    this.validarPeriodo({ from, to });
+    const prod = await this.getProductById(id);
+    if (!prod) throw erro('Produto não encontrado.', 404);
+    const lim = Math.min(Math.max(Math.trunc(Number(limite)) || 300, 1), 1000);
+    const sinal = "CASE WHEN tipo_movimentacao = 'Entrada' THEN quantidade ELSE -quantidade END";
+    let depois = 0;
+    if (to) {
+      const [[s]] = await pool.query(`SELECT COALESCE(SUM(${sinal}), 0) AS q FROM movimentacao_estoque WHERE id_produto = ? AND data_movimentacao > ?`, [prod.id_produto, `${to} 23:59:59`]);
+      depois = Number(s.q);
+    }
+    const f = this.filtroMovimentacoes({ from, to, id_produto: prod.id_produto });
+    const [rows] = await pool.query(`${SQL_MOV}${f.sql} ORDER BY m.id_movimentacao DESC LIMIT ${lim}`, f.params);
+    let saldo = r3(prod.quantidade_estoque - depois);
+    const saldoFinal = saldo;
+    const movimentos = rows.map(r => {
+      const m = mapMov(r);
+      const antes = r3(saldo - (m.tipo_movimentacao === 'Entrada' ? m.quantidade : -m.quantidade));
+      const linha = { ...m, saldo_antes: antes, saldo_depois: saldo, atencao: ehAjuste(m.origem, m.tipo_movimentacao) };
+      saldo = antes;
+      return linha;
+    });
+    const [confs] = await pool.query(
+      `SELECT c.id_conferencia, c.data_conferencia, u.nome AS responsavel, c.ajustou_estoque, i.quantidade_sistema, i.quantidade_fisica, i.divergencia
+       FROM item_conferencia i JOIN conferencia c ON c.id_conferencia = i.id_conferencia JOIN usuario u ON u.id_usuario = c.id_usuario
+       WHERE i.id_produto = ? ORDER BY c.id_conferencia DESC LIMIT 20`, [prod.id_produto]);
+    return {
+      produto: { id_produto: prod.id_produto, nome_produto: prod.nome_produto, unidade: prod.unidade, quantidade_estoque: prod.quantidade_estoque },
+      filtros: { from: from || null, to: to || null }, saldoFinal, saldoInicial: saldo, movimentos, truncado: rows.length === lim,
+      conferencias: confs.map(c => ({ ...c, data_conferencia: hm(c.data_conferencia), ajustou_estoque: bool(c.ajustou_estoque) }))
+    };
+  }
+
   // ---------------------------------------------------------------- relatórios (RF 12, 13, 14)
   validarPeriodo({ from, to }) {
     if (from && !DATA_RE.test(from)) throw erro('A data inicial é inválida.');
@@ -1152,15 +1460,20 @@ class Database {
     const filtro = where.join(' AND ');
     // Três leituras enxutas em paralelo (cabeçalhos, itens só com números e catálogo); o resto é somado
     // aqui com Map. Medido no teste de carga: é mais rápido que agrupar com GROUP_CONCAT no MySQL.
-    const [[vendas], [itens], [prods]] = await Promise.all([
+    const [[vendas], [itens], [prods], [partes]] = await Promise.all([
       pool.query(
         `SELECT v.id_venda, v.codigo_venda, v.data_venda, v.forma_pagamento, v.valor_subtotal, v.valor_total, u.nome AS usuario_nome
          FROM venda v JOIN usuario u ON u.id_usuario = v.id_usuario WHERE ${filtro} ORDER BY v.id_venda DESC`, params),
       pool.query(
         `SELECT i.id_item_venda, i.id_venda, i.id_produto, i.quantidade, i.subtotal
          FROM venda v JOIN item_venda i ON i.id_venda = v.id_venda WHERE ${filtro}`, params),
-      pool.query('SELECT p.id_produto, p.nome_produto, p.unidade, p.id_categoria, c.nome_categoria FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria')
+      pool.query('SELECT p.id_produto, p.nome_produto, p.unidade, p.id_categoria, c.nome_categoria FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria'),
+      pool.query(
+        `SELECT vp.id_venda, vp.forma_pagamento, vp.valor FROM venda v JOIN venda_pagamento vp ON vp.id_venda = v.id_venda
+         WHERE ${filtro} ORDER BY vp.id_venda_pagamento`, params)
     ]);
+    const partesDe = new Map();
+    for (const p of partes) { const l = partesDe.get(p.id_venda); if (l) l.push(p); else partesDe.set(p.id_venda, [p]); }
     const catDe = new Map(prods.map(p => [p.id_produto, p]));
     const itensDe = new Map();
     for (const i of itens) {
@@ -1192,10 +1505,20 @@ class Database {
       }
       const liq = r2(sub * razao);
       bruto = r2(bruto + sub); liquido = r2(liquido + liq); descontos = r2(descontos + (sub - liq));
-      const pg = pagamentos.get(v.forma_pagamento) || { forma: v.forma_pagamento, total: 0, quantidade: 0 };
-      pg.total = r2(pg.total + liq); pg.quantidade++;
-      pagamentos.set(v.forma_pagamento, pg);
-      transacoes.push({ id_venda: v.id_venda, codigo_venda: v.codigo_venda, data_venda: hm(v.data_venda), usuario_nome: v.usuario_nome, forma_pagamento: v.forma_pagamento, itens_resumo: resumo.join(', '), bruto: r2(sub), desconto: r2(sub - liq), valor_total: liq });
+      // Pagamento misto: o valor da venda entra em cada forma na proporção das partes (a última fica com o arredondamento).
+      const pv = partesDe.get(v.id_venda);
+      const fatias = pv ? pv.map(p => ({ forma: p.forma_pagamento, peso: p.valor })) : [{ forma: v.forma_pagamento, peso: 1 }];
+      const pesoTotal = fatias.reduce((s, f) => s + f.peso, 0);
+      let resto = liq;
+      fatias.forEach((f, ix) => {
+        const valor = ix === fatias.length - 1 ? r2(resto) : r2(liq * f.peso / pesoTotal);
+        resto = r2(resto - valor);
+        const pg = pagamentos.get(f.forma) || { forma: f.forma, total: 0, quantidade: 0 };
+        pg.total = r2(pg.total + valor); pg.quantidade++;
+        pagamentos.set(f.forma, pg);
+      });
+      const formaTxt = pv ? `Misto (${pv.map(p => p.forma_pagamento).join(' + ')})` : v.forma_pagamento;
+      transacoes.push({ id_venda: v.id_venda, codigo_venda: v.codigo_venda, data_venda: hm(v.data_venda), usuario_nome: v.usuario_nome, forma_pagamento: formaTxt, itens_resumo: resumo.join(', '), bruto: r2(sub), desconto: r2(sub - liq), valor_total: liq });
     }
     const itensVendidos = [...mapa.values()].map(i => ({ ...i, valor_unitario: i.quantidade ? r2(i.total / i.quantidade) : 0 })).sort((a, b) => b.total - a.total);
     return {

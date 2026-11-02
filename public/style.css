@@ -331,6 +331,7 @@ html[data-theme="dark"] .btn-danger, html.hc .btn-danger { color: #111827; }
 .btn-action-info:hover { color: var(--info); border-color: var(--info); }
 .btn-action-next:hover { color: var(--brand); border-color: var(--brand); }
 .btn-action-accept:hover { color: var(--success); border-color: var(--success); }
+.btn-action-whats:hover { color: #1f9d55; border-color: #1f9d55; }
 .btn-action-cancel:hover, .btn-action-trash:hover { color: var(--danger); border-color: var(--danger); }
 .col-acoes { white-space: nowrap; }
 .col-acoes .btn-icon + .btn-icon { margin-left: 4px; }
@@ -596,6 +597,9 @@ button.kpi-card:hover { border-color: var(--brand); box-shadow: var(--shadow-md)
 .venda-picker-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .picker-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .picker-col .venda-picker-label { margin-top: 6px; }
+.pdv-misto { display: flex; flex-direction: column; gap: 6px; }
+.pdv-misto-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.pdv-misto-grid label { display: flex; flex-direction: column; gap: 4px; margin-top: 0; }
 .desc-inline { display: grid; grid-template-columns: 1fr 64px; gap: 6px; }
 .stock-live-badge {
   height: 40px; border-radius: var(--radius-sm); display: flex; align-items: center; padding: 0 12px; font-weight: 700; font-variant-numeric: tabular-nums;
@@ -645,6 +649,13 @@ html[data-theme="dark"] .btn-finalizar-checkout, html.hc .btn-finalizar-checkout
 .relatorio-total-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 .rel-pagamentos { display: flex; gap: 8px; flex-wrap: wrap; font-size: .82rem; }
 .rel-pagamentos > * { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 4px 10px; }
+.vs-origens:not(:empty) { margin-bottom: 12px; }
+
+/* ================================================================ AUDITORIA DO ESTOQUE */
+.aud-motivos { display: flex; flex-direction: column; gap: 2px; font-size: .82rem; min-width: 180px; }
+.row-atencao { background: var(--warning-soft); }
+.ext-tabela { max-height: 46vh; overflow: auto; }
+.ext-sub { margin: 16px 0 8px; font-size: .92rem; }
 
 /* ================================================================ CONFIGURAÇÃO / AJUDA */
 .config-form { max-width: 720px; }
@@ -804,4 +815,25 @@ html[data-theme="dark"] .btn-finalizar-checkout, html.hc .btn-finalizar-checkout
   body { overflow: visible; height: auto; }
   .main-content { overflow: visible; }
   .table-responsive { max-height: none; overflow: visible; border: 0; }
+}
+
+/* ================================================================ FORNECEDORES E PEDIDO EM MASSA */
+.forn-lista { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow: auto; margin-bottom: 8px; }
+.forn-linha { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.pm-modelo-row { display: flex; gap: 6px; align-items: center; }
+.pm-modelo-row select { flex: 1; min-width: 0; }
+.pm-head, .pm-linha { display: grid; grid-template-columns: minmax(0, 1fr) 110px 120px 110px 34px; gap: 8px; align-items: center; }
+.pm-head { font-size: .78rem; font-weight: 650; color: var(--text-muted); margin-bottom: 6px; }
+.pm-linha { margin-bottom: 8px; }
+.pm-sub { font-size: .86rem; font-variant-numeric: tabular-nums; text-align: right; }
+#pm-linhas { max-height: 40vh; overflow: auto; }
+.pm-botoes { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 14px; }
+.pm-total { margin-left: auto; font-variant-numeric: tabular-nums; }
+.pm-obs { flex: 1; min-width: 240px; }
+.pm-resumo { margin: 0 0 12px 18px; display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
+@media (max-width: 640px) {
+  .pm-head { display: none; }
+  .pm-linha { grid-template-columns: minmax(0, 1fr) 90px 34px; }
+  .pm-linha .pm-valor, .pm-linha .pm-sub { display: none; }
+  .forn-linha { grid-template-columns: 1fr; }
 }

@@ -168,8 +168,10 @@
         <a href="#dashboard" class="nav-item active" data-view="dashboard" data-perm="dashboard:ver" title="Início"><svg class="nav-ico" aria-hidden="true"><use href="#i-home"/></svg><span class="nav-text">Início</span></a>
         <div class="nav-group-label">Estoque</div>
         <a href="#estoque" class="nav-item" data-view="estoque" data-perm="estoque:conferir" title="Verificar Estoque"><svg class="nav-ico" aria-hidden="true"><use href="#i-box"/></svg><span class="nav-text">Verificar Estoque</span></a>
+        <a href="#auditoria" class="nav-item" data-view="auditoria" data-perm="auditoria:ver" title="Auditoria do Estoque"><svg class="nav-ico" aria-hidden="true"><use href="#i-eye"/></svg><span class="nav-text">Auditoria do Estoque</span></a>
         <a href="#entradas" class="nav-item" data-view="entradas" data-perm="movimentos:ver" title="Entrada de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-in"/></svg><span class="nav-text">Entrada de Produtos</span></a>
         <a href="#saidas" class="nav-item" data-view="saidas" data-perm="movimentos:ver" title="Saída de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-out"/></svg><span class="nav-text">Saída de Produtos</span></a>
+        <a href="#vendas-saidas" class="nav-item" data-view="vendas-saidas" data-perm="movimentos:ver" title="Vendas e Saídas"><svg class="nav-ico" aria-hidden="true"><use href="#i-history"/></svg><span class="nav-text">Vendas e Saídas</span></a>
         <a href="#requisicoes" class="nav-item" data-view="requisicoes" data-perm="requisicoes:ver" title="Requisição"><svg class="nav-ico" aria-hidden="true"><use href="#i-clipboard"/></svg><span class="nav-text">Requisição</span></a>
         <a href="#cadastro" class="nav-item" data-view="cadastro" data-perm="produtos:editar" title="Cadastro de Produtos"><svg class="nav-ico" aria-hidden="true"><use href="#i-tag"/></svg><span class="nav-text">Cadastro de Produtos</span></a>
         <div class="nav-group-label">Produção</div>
@@ -281,11 +283,44 @@
         </div>
       </section>
 
+      <!-- 2b. AUDITORIA DO ESTOQUE (o que conferir primeiro + extrato de cada produto) -->
+      <section id="view-auditoria" class="app-view">
+        <div class="figma-tab-header">
+          <div>
+            <div class="figma-tab-title-pill">Auditoria do Estoque</div>
+            <p class="page-sub">O que conferir primeiro: produtos nunca conferidos, com divergência na última contagem ou com muitos ajustes à mão (saída manual, ajuste de venda ou de conferência, estorno).</p>
+          </div>
+          <label class="inline-field">Ajustes dos últimos
+            <select id="aud-dias" class="select-field" aria-label="Período dos ajustes"><option value="7">7 dias</option><option value="30" selected>30 dias</option><option value="90">90 dias</option></select>
+          </label>
+        </div>
+        <div class="kpi-grid" id="aud-cards" aria-live="polite"></div>
+        <div class="figma-card full-panel">
+          <div class="filter-toolbar">
+            <input type="text" id="aud-busca" placeholder="Filtrar por produto ou código..." class="input-search" aria-label="Filtrar auditoria por produto">
+            <select id="aud-prioridade" class="select-field" aria-label="Filtrar por prioridade">
+              <option value="">Todas as prioridades</option><option value="Alta">Prioridade alta</option><option value="Média">Prioridade média</option><option value="Baixa">Prioridade baixa</option>
+            </select>
+            <span class="toolbar-hint" id="aud-resumo"></span>
+          </div>
+          <div class="table-responsive">
+            <table class="figma-styled-table">
+              <thead><tr><th>Prioridade</th><th>Produto</th><th>Estoque</th><th>Última conferência</th><th>Divergência</th><th>Ajustes à mão</th><th>Por quê</th><th>Ações</th></tr></thead>
+              <tbody id="aud-corpo"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- 3. REQUISIÇÃO -->
       <section id="view-requisicoes" class="app-view">
         <div class="figma-tab-header">
           <div class="figma-tab-title-pill">Requisições</div>
-          <button class="btn btn-primary" id="btn-abrir-modal-req" data-perm="requisicoes:criar"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> Nova requisição</button>
+          <div class="tab-header-actions">
+            <button class="btn btn-secondary" id="btn-fornecedores" data-perm="fornecedores:gerir"><svg class="icon" aria-hidden="true"><use href="#i-truck"/></svg> Fornecedores</button>
+            <button class="btn btn-secondary" id="btn-pedido-massa" data-perm="requisicoes:criar"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg> Pedido em massa</button>
+            <button class="btn btn-primary" id="btn-abrir-modal-req" data-perm="requisicoes:criar"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> Nova requisição</button>
+          </div>
         </div>
 
         <div class="figma-card requisicao-figma-showcase" id="req-showcase">
@@ -448,6 +483,42 @@
         </div>
       </section>
 
+      <!-- 5b. VENDAS E SAÍDAS (tudo o que saiu do estoque, numa lista só) -->
+      <section id="view-vendas-saidas" class="app-view">
+        <div class="figma-tab-header">
+          <div>
+            <div class="figma-tab-title-pill">Vendas e Saídas</div>
+            <p class="page-sub">Tudo o que saiu do estoque numa lista só: vendas, perdas, consumo da produção, saídas manuais e ajustes.</p>
+          </div>
+          <div class="tab-header-actions">
+            <button class="btn btn-secondary" id="vs-pdf" type="button"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg> PDF</button>
+            <button class="btn btn-secondary" id="vs-excel" type="button"><svg class="icon" aria-hidden="true"><use href="#i-sheet"/></svg> Excel</button>
+          </div>
+        </div>
+        <div class="figma-card full-panel">
+          <div class="filter-toolbar">
+            <label class="inline-field">De <input type="date" id="vs-de" class="select-field"></label>
+            <label class="inline-field">Até <input type="date" id="vs-ate" class="select-field"></label>
+            <select id="vs-origem" class="select-field" aria-label="Filtrar por tipo de saída">
+              <option value="">Todos os tipos</option><option value="venda">Venda</option><option value="perda">Perda / sobra</option>
+              <option value="producao">Consumo na produção</option><option value="manual">Saída manual</option>
+              <option value="ajuste">Ajuste de venda</option><option value="conferencia">Ajuste de conferência</option><option value="estorno">Estorno</option>
+            </select>
+            <select id="vs-produto" class="select-field" aria-label="Filtrar por produto"><option value="">Todos os produtos</option></select>
+            <button class="btn btn-sm btn-secondary" id="vs-limpar">Limpar filtros</button>
+            <span class="toolbar-hint" id="vs-resumo"></span>
+          </div>
+          <div class="rel-pagamentos vs-origens" id="vs-origens"></div>
+          <div class="table-responsive">
+            <table class="figma-styled-table">
+              <thead><tr><th>Data</th><th>Tipo</th><th>Produto</th><th>Quant</th><th>Unidade R$</th><th>Total R$</th><th>Responsável</th><th>Observação</th></tr></thead>
+              <tbody id="vs-tabela-corpo"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="vs-pager"></div>
+        </div>
+      </section>
+
       <!-- 6. ENTRADA DE PRODUTOS -->
       <section id="view-entradas" class="app-view">
         <div class="figma-tab-header">
@@ -555,6 +626,7 @@
                   <select id="pdv-forma-pagamento" class="figma-select-dark" aria-label="Forma de Pagamento">
                     <option value="Dinheiro">Dinheiro</option><option value="Cartão Débito">Cartão Débito</option>
                     <option value="Cartão Crédito">Cartão Crédito</option><option value="PIX">PIX</option>
+                    <option value="Misto">Dividir (misto)</option>
                   </select>
                 </div>
                 <div class="picker-col">
@@ -564,6 +636,17 @@
                     <select id="pdv-desconto-tipo" class="figma-select-dark" aria-label="Tipo de desconto"><option value="valor">R$</option><option value="percentual">%</option></select>
                   </div>
                 </div>
+              </div>
+
+              <div class="pdv-misto is-hidden" id="pdv-misto" aria-label="Pagamento dividido entre formas">
+                <span class="venda-picker-label">Dividir o pagamento (R$):</span>
+                <div class="pdv-misto-grid">
+                  <label class="venda-picker-label">Dinheiro <input type="number" class="figma-input-dark pdv-parte" data-forma="Dinheiro" min="0" step="0.01" placeholder="0,00"></label>
+                  <label class="venda-picker-label">PIX <input type="number" class="figma-input-dark pdv-parte" data-forma="PIX" min="0" step="0.01" placeholder="0,00"></label>
+                  <label class="venda-picker-label">Débito <input type="number" class="figma-input-dark pdv-parte" data-forma="Cartão Débito" min="0" step="0.01" placeholder="0,00"></label>
+                  <label class="venda-picker-label">Crédito <input type="number" class="figma-input-dark pdv-parte" data-forma="Cartão Crédito" min="0" step="0.01" placeholder="0,00"></label>
+                </div>
+                <div id="pdv-misto-falta" class="stock-live-badge" aria-live="polite">--</div>
               </div>
 
               <div class="venda-picker-row" id="pdv-recebido-row">
@@ -871,6 +954,7 @@
   <script src="js/auth.js"></script>
   <script src="js/dashboard.js"></script>
   <script src="js/estoque.js"></script>
+  <script src="js/auditoria.js"></script>
   <script src="js/requisicoes.js"></script>
   <script src="js/produtos.js"></script>
   <script src="js/movimentos.js"></script>

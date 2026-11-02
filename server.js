@@ -155,7 +155,10 @@ route('GET', '/api/dashboard', { perm: 'dashboard:ver' }, async ctx => {
 });
 route('GET', '/api/alerts', { perm: 'dashboard:ver' }, async () => ok({ alerts: await db.getAlertasCriticos() }));
 route('GET', '/api/categories', {}, async () => ok({ categories: await db.listCategorias() }));
-route('GET', '/api/suppliers', {}, async () => ok({ suppliers: await db.listFornecedores() }));
+// ?detalhe=1 devolve id, nome e WhatsApp; sem ele, só os nomes (como antes).
+route('GET', '/api/suppliers', {}, async ctx => ok({ suppliers: ctx.query.detalhe ? await db.listFornecedoresDetalhe() : await db.listFornecedores() }));
+route('POST', '/api/suppliers', { perm: 'fornecedores:gerir' }, async ctx => ok({ supplier: await db.saveFornecedor(null, ctx.body), message: 'Fornecedor cadastrado com sucesso!' }, 201));
+route('PUT', '/api/suppliers/:id', { perm: 'fornecedores:gerir' }, async ctx => ok({ supplier: await db.saveFornecedor(ctx.params.id, ctx.body), message: 'Fornecedor atualizado com sucesso!' }));
 route('GET', '/api/profiles', { perm: 'usuarios:gerir' }, async () => ok({ profiles: await db.listPerfis() }));
 route('GET', '/api/settings', {}, async ctx => ok({ settings: await db.getSettings(), hoje: hojeISO() }));
 route('PUT', '/api/settings', { perm: 'config:gerir' }, async ctx => ok({ settings: await db.updateSettings(ctx.body), message: 'Configurações salvas com sucesso!' }));
@@ -225,6 +228,19 @@ route('GET', '/api/requisitions/:id', { perm: 'requisicoes:ver' }, async ctx => 
   return ok({ requisicao: r });
 });
 route('POST', '/api/requisitions', { perm: 'requisicoes:criar' }, async ctx => ok({ requisicao: await db.createRequisicao(ctx.body, ctx.user), message: 'Pedido realizado com sucesso' }, 201));
+route('POST', '/api/requisitions/batch', { perm: 'requisicoes:criar' }, async ctx => {
+  const p = await db.createPedidoEmMassa(ctx.body, ctx.user);
+  return ok({ pedido: p, message: `Pedido ${p.pedido_grupo} realizado com ${p.requisicoes.length} item(ns)` }, 201);
+});
+
+// ---------------- pedidos predefinidos (modelos de pedido em massa)
+route('GET', '/api/order-templates', { perm: 'requisicoes:ver' }, async () => ok({ modelos: await db.listModelos() }));
+route('POST', '/api/order-templates', { perm: 'requisicoes:criar' }, async ctx => ok({ modelo: await db.saveModelo(null, ctx.body, ctx.user), message: 'Pedido predefinido salvo!' }, 201));
+route('PUT', '/api/order-templates/:id', { perm: 'requisicoes:criar' }, async ctx => ok({ modelo: await db.saveModelo(ctx.params.id, ctx.body, ctx.user), message: 'Pedido predefinido atualizado!' }));
+route('DELETE', '/api/order-templates/:id', { perm: 'requisicoes:criar' }, async ctx => {
+  await db.deleteModelo(ctx.params.id);
+  return ok({ message: 'Pedido predefinido excluído.' });
+});
 route('PATCH', '/api/requisitions/:id/status', {}, async ctx => {
   const sit = ctx.body.situacao;
   exigir(ctx, sit === 'Cancelado' ? 'requisicoes:cancelar' : sit === 'Finalizado' ? 'requisicoes:receber' : 'requisicoes:avancar');
@@ -236,9 +252,14 @@ route('PATCH', '/api/requisitions/:id/status', {}, async ctx => {
 });
 
 // ---------------- movimentações
+// ?origem= e ?id_produto= filtram (tela Vendas e Saídas); ?resumo=1 soma também por origem.
+const filtroMov = ctx => ({ tipo: ctx.query.tipo, from: ctx.query.from, to: ctx.query.to, origem: ctx.query.origem, id_produto: ctx.query.id_produto });
 route('GET', '/api/movements', { perm: 'movimentos:ver' }, async ctx => {
-  const f = { tipo: ctx.query.tipo, from: ctx.query.from, to: ctx.query.to };
-  return comTotal(ctx, 'movements', await db.getMovimentacoes({ ...f, ...pagina(ctx) }), () => db.contarMovimentacoes(f));
+  const f = filtroMov(ctx);
+  db.validarPeriodo(f);
+  return comTotal(ctx, 'movements', await db.getMovimentacoes({ ...f, ...pagina(ctx) }), async () => ({
+    ...(await db.contarMovimentacoes(f)), ...(ctx.query.resumo ? { porOrigem: await db.resumoPorOrigem(f) } : {})
+  }));
 });
 route('POST', '/api/movements', { perm: 'movimentos:registrar' }, async ctx => {
   const movs = await db.registrarMovimentacoes(ctx.body, ctx.user);
@@ -315,6 +336,11 @@ route('DELETE', '/api/sales/:id', { perm: 'vendas:excluir' }, async ctx => {
 // ---------------- conferência
 route('GET', '/api/inventory', { perm: 'estoque:conferir' }, async () => ok({ conferencias: await db.listConferencias(), itensParaConferencia: await db.listProdutosAtivos() }));
 route('POST', '/api/inventory', { perm: 'estoque:conferir' }, async ctx => ok({ conferencia: await db.salvarConferencia(ctx.body, ctx.user), message: 'Conferência de estoque salva com sucesso!' }, 201));
+
+// ---------------- mapa de auditoria do estoque
+route('GET', '/api/audit', { perm: 'auditoria:ver' }, async ctx => ok({ mapa: await db.getMapaAuditoria({ dias: ctx.query.dias || 30 }) }));
+route('GET', '/api/audit/products/:id', { perm: 'auditoria:ver' }, async ctx =>
+  ok({ extrato: await db.getExtratoProduto(ctx.params.id, { from: ctx.query.from, to: ctx.query.to, limite: ctx.query.limit }) }));
 
 // ---------------- relatórios (+ exportação PDF/XLSX)
 const brl = n => `R$ ${Number(n).toFixed(2).replace('.', ',')}`;
@@ -409,6 +435,34 @@ route('GET', '/api/reports/losses', { perm: 'relatorios:ver' }, async ctx => {
           rows: [...d.porProduto.map(p => [p.nome_produto, p.categoria, p.unidade, num(p.quantidade), brl(p.valor_total)]), Object.assign(['TOTAL', '', '', '', brl(d.valorTotal)], { __bold: true })] },
         { heading: 'Registros', columns: [{ label: 'Data', w: 2.4 }, { label: 'Produto', w: 4 }, { label: 'Motivo', w: 2.2 }, { label: 'Quant.', w: 1.4, align: 'right' }, { label: 'Valor', w: 1.8, align: 'right' }, { label: 'Responsável', w: 2.4 }],
           rows: d.registros.map(r => [r.data_movimentacao, r.produto_nome, r.motivo_perda, `${num(r.quantidade)} ${r.unidade}`, brl(r.valor_total), r.usuario_nome]) }
+      ]
+    };
+  });
+});
+
+// Vendas e Saídas: tudo o que saiu do estoque (vendas, perdas, consumo da produção, saídas manuais e ajustes).
+const ROTULO_ORIGEM = { venda: 'Venda', perda: 'Perda / sobra', producao: 'Consumo na produção', manual: 'Saída manual', ajuste: 'Ajuste de venda', conferencia: 'Ajuste de conferência', estorno: 'Estorno', requisicao: 'Requisição' };
+route('GET', '/api/reports/outflows', { perm: 'movimentos:ver' }, async ctx => {
+  const f = { ...filtroMov(ctx), tipo: 'Saída' };
+  db.validarPeriodo(f);
+  const [registros, totais, porOrigem] = await Promise.all([db.getMovimentacoes(f), db.contarMovimentacoes(f), db.resumoPorOrigem(f)]);
+  return entregarRelatorio(ctx, 'saidas', { filtros: f, registros, porOrigem, ...totais }, d => {
+    const per = d.filtros.from || d.filtros.to ? `${d.filtros.from ? dataBR(d.filtros.from) : 'início'} a ${d.filtros.to ? dataBR(d.filtros.to) : 'hoje'}` : 'Todo o período';
+    const origens = d.porOrigem.map(o => `${ROTULO_ORIGEM[o.origem] || o.origem}: ${brl(o.valor)}`).join('  |  ');
+    const sub = [`Período: ${per}`, `Registros: ${d.total}  |  Valor: ${brl(d.valorTotal)}${origens ? `  |  ${origens}` : ''}`];
+    const totalRow = Object.assign(['TOTAL', '', '', '', '', '', d.valorTotal, ''], { __bold: true });
+    return {
+      titulo: 'Vendas e Saídas do Estoque', subtitulo: sub, landscape: true,
+      sheets: [
+        { name: 'Saídas', title: 'Vendas e Saídas do Estoque', subtitle: sub[1],
+          columns: [{ label: 'Data', width: 17 }, { label: 'Tipo', width: 20 }, { label: 'Produto', width: 34 }, { label: 'Quant.', width: 10, fmt: 'dec' }, { label: 'Unid', width: 8 }, { label: 'Valor unit.', width: 12, fmt: 'money' }, { label: 'Total', width: 12, fmt: 'money' }, { label: 'Responsável', width: 18 }, { label: 'Observação', width: 40 }],
+          rows: [...d.registros.map(m => [m.data_movimentacao, ROTULO_ORIGEM[m.origem] || m.origem, m.produto_nome, m.quantidade, m.unidade, m.valor_unitario, m.valor_total, m.usuario_nome, m.observacao]), totalRow] }
+      ],
+      sections: [
+        { heading: 'Por tipo de saída', columns: [{ label: 'Tipo', w: 4 }, { label: 'Registros', w: 1.6, align: 'right' }, { label: 'Valor', w: 2, align: 'right' }],
+          rows: d.porOrigem.map(o => [ROTULO_ORIGEM[o.origem] || o.origem, String(o.registros), brl(o.valor)]) },
+        { heading: 'Registros', columns: [{ label: 'Data', w: 2.4 }, { label: 'Tipo', w: 2.6 }, { label: 'Produto', w: 4 }, { label: 'Quant.', w: 1.6, align: 'right' }, { label: 'Total', w: 1.8, align: 'right' }, { label: 'Responsável', w: 2.4 }],
+          rows: [...d.registros.map(m => [m.data_movimentacao, ROTULO_ORIGEM[m.origem] || m.origem, m.produto_nome, `${num(m.quantidade)} ${m.unidade}`, brl(m.valor_total), m.usuario_nome]), Object.assign(['TOTAL', '', '', '', brl(d.valorTotal), ''], { __bold: true })] }
       ]
     };
   });

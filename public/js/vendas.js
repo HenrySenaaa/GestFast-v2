@@ -58,13 +58,27 @@
     produtoMudou();
   }
 
+  // Pagamento misto: as partes preenchidas (valor > 0) e quanto falta para fechar o total.
+  const partesMisto = () => GF.$$('.pdv-parte').map(i => ({ forma_pagamento: i.dataset.forma, valor: round(Number(i.value) || 0) })).filter(p => p.valor > 0);
+  const parteDinheiro = () => (partesMisto().find(p => p.forma_pagamento === 'Dinheiro') || { valor: 0 }).valor;
+
   function atualizarTroco(t = totais()) {
-    const dinheiro = $('#pdv-forma-pagamento').value === 'Dinheiro';
-    $('#pdv-recebido-row').classList.toggle('is-hidden', !dinheiro);
+    const forma = $('#pdv-forma-pagamento').value, misto = forma === 'Misto';
+    $('#pdv-misto').classList.toggle('is-hidden', !misto);
+    if (misto) {
+      const falta = round(t.total - partesMisto().reduce((s, p) => s + p.valor, 0));
+      const f = $('#pdv-misto-falta');
+      f.textContent = !t.total ? '--' : falta > 0 ? `Falta ${GF.money(falta)}` : falta < 0 ? `Passou ${GF.money(-falta)}` : 'Total fechado';
+      f.classList.toggle('stock-low', !!t.total && falta !== 0);
+    }
+    // Troco: no dinheiro, sobre o total; no misto, só sobre a parte em dinheiro.
+    const base = misto ? parteDinheiro() : forma === 'Dinheiro' ? t.total : 0;
+    const temDinheiro = forma === 'Dinheiro' || (misto && base > 0);
+    $('#pdv-recebido-row').classList.toggle('is-hidden', !temDinheiro);
     const rec = $('#pdv-recebido').value;
     const b = $('#pdv-troco');
-    if (!dinheiro || rec === '') { b.textContent = '--'; return; }
-    const troco = round(Number(rec) - t.total);
+    if (!temDinheiro || rec === '') { b.textContent = '--'; b.classList.remove('stock-low'); return; }
+    const troco = round(Number(rec) - base);
     b.textContent = troco >= 0 ? GF.money(troco) : 'insuficiente';
     b.classList.toggle('stock-low', troco < 0);
   }
@@ -107,14 +121,22 @@
     const t = totais();
     const erroDesc = validarDesconto(t);
     if (erroDesc) { GF.marcarErro($('#pdv-desconto')); GF.toast(erroDesc, 'error'); return; }
-    const forma = $('#pdv-forma-pagamento').value;
+    const forma = $('#pdv-forma-pagamento').value, misto = forma === 'Misto';
     const rec = $('#pdv-recebido').value;
     if (forma === 'Dinheiro' && rec !== '' && Number(rec) < t.total) { GF.marcarErro($('#pdv-recebido')); GF.toast('O valor recebido é menor que o total da venda.', 'error'); return; }
+    const partes = misto ? partesMisto() : null;
+    if (misto) {
+      if (partes.length < 2) { GF.marcarErro(GF.$('.pdv-parte')); GF.toast('No pagamento misto, preencha ao menos duas formas.', 'error'); return; }
+      const soma = round(partes.reduce((s, p) => s + p.valor, 0));
+      if (soma !== t.total) { GF.toast(`A soma das formas (${GF.money(soma)}) deve ser igual ao total da venda (${GF.money(t.total)}).`, 'error'); return; }
+      if (rec !== '' && parteDinheiro() > 0 && Number(rec) < parteDinheiro()) { GF.marcarErro($('#pdv-recebido')); GF.toast('O valor recebido é menor que a parte em dinheiro.', 'error'); return; }
+    }
+    const usaRecebido = rec !== '' && (forma === 'Dinheiro' || (misto && parteDinheiro() > 0));
     const btn = $('#pdv-btn-finalizar-venda'); btn.disabled = true;
     try {
       const r = await GF.post('/api/sales', {
-        itens: cart.map(i => ({ id_produto: i.id_produto, quantidade: i.qtd })), forma_pagamento: forma,
-        desconto: Number($('#pdv-desconto').value) || 0, desconto_tipo: $('#pdv-desconto-tipo').value, valor_recebido: forma === 'Dinheiro' && rec !== '' ? Number(rec) : undefined
+        itens: cart.map(i => ({ id_produto: i.id_produto, quantidade: i.qtd })), forma_pagamento: forma, ...(misto ? { pagamentos: partes } : {}),
+        desconto: Number($('#pdv-desconto').value) || 0, desconto_tipo: $('#pdv-desconto-tipo').value, valor_recebido: usaRecebido ? Number(rec) : undefined
       });
       const v = r.sale;
       GF.toast(`${r.message} • ${v.codigo_venda} • ${GF.money(v.valor_total)}${v.troco ? ` • Troco ${GF.money(v.troco)}` : ''}`, 'success');
@@ -127,6 +149,7 @@
   function limparVenda(silencioso) {
     cart = []; selItem = null;
     $('#pdv-desconto').value = 0; $('#pdv-recebido').value = ''; $('#pdv-quantidade').value = 1;
+    GF.$$('.pdv-parte').forEach(i => { i.value = ''; });
     renderCart();
     if (!silencioso) GF.toast('Venda limpa.', 'info');
   }
@@ -146,6 +169,8 @@
 
   // ------------------------------------------------------------ Histórico
   let vendas = [];
+  // "Misto: PIX R$ 20,00 + Dinheiro R$ 15,00"; forma única fica só com o nome.
+  const partesTexto = v => v.pagamentos.map(p => `${p.forma_pagamento} ${GF.money(p.valor)}`).join(' + ');
   const badgeV = s => `<span class="badge-status-pill ${s === 'Concluída' ? 'badge-success' : 'badge-urgent'}">${esc(s)}</span>`;
 
   // Lista paginada (50 por página); total e faturamento vêm do servidor para o filtro inteiro.
@@ -158,7 +183,7 @@
       $('#hist-resumo').textContent = `${r.total.toLocaleString('pt-BR')} venda(s) • faturamento ${GF.money(r.faturamento)}`;
       GF.pager($('#hist-pager'), { total: r.total, offset, ir: carregarHist });
       $('#hist-tabela-corpo').innerHTML = vendas.length ? vendas.map(v => `<tr data-id="${v.id_venda}" class="${v.status_venda === 'Cancelada' ? 'row-inactive' : ''}">
-        <td><strong>${esc(v.codigo_venda)}</strong></td><td>${GF.date(v.data_venda)}</td><td>${esc(v.usuario_nome)}</td><td>${esc(v.forma_pagamento)}</td>
+        <td><strong>${esc(v.codigo_venda)}</strong></td><td>${GF.date(v.data_venda)}</td><td>${esc(v.usuario_nome)}</td><td>${esc(v.forma_pagamento)}${v.forma_pagamento === 'Misto' ? `<br><small class="muted">${esc(partesTexto(v))}</small>` : ''}</td>
         <td class="cell-itens">${esc(v.itens.map(i => `${i.nome_produto} x${GF.qty(i.quantidade)}`).join(', '))}</td>
         <td>${GF.money(v.valor_total)}${v.desconto ? `<br><small class="muted">desc. ${GF.money(v.desconto)}</small>` : ''}</td>
         <td>${badgeV(v.status_venda)}${v.data_edicao ? '<br><small class="muted">editada</small>' : ''}</td>
@@ -174,7 +199,7 @@
   function detalhes(v) {
     GF.openModal({
       title: `${v.codigo_venda} - ${v.status_venda}`, wide: true,
-      html: `<p class="muted">${GF.date(v.data_venda)} • Operador: ${esc(v.usuario_nome)} • ${esc(v.forma_pagamento)}${v.nsu ? ` • NSU ${esc(v.nsu)}` : ''}</p>
+      html: `<p class="muted">${GF.date(v.data_venda)} • Operador: ${esc(v.usuario_nome)} • ${v.forma_pagamento === 'Misto' ? `Misto: ${esc(partesTexto(v))}${v.pagamentos.filter(p => p.nsu).map(p => ` • NSU ${esc(p.nsu)}`).join('')}` : esc(v.forma_pagamento)}${v.nsu ? ` • NSU ${esc(v.nsu)}` : ''}</p>
         <table class="figma-styled-table"><thead><tr><th>Produto</th><th>Valor</th><th>Quant.</th><th>Subtotal</th></tr></thead><tbody>
         ${v.itens.map(i => `<tr><td>${esc(i.nome_produto)}</td><td>${GF.num2(i.valor_unitario)}</td><td>${GF.qty(i.quantidade)} ${esc(i.unidade)}</td><td>${GF.num2(i.subtotal)}</td></tr>`).join('')}</tbody></table>
         <div class="sale-sum"><span>Subtotal: ${GF.money(v.valor_subtotal)}</span><span>Desconto: - ${GF.money(v.desconto)}</span><strong>Total: ${GF.money(v.valor_total)}</strong>
@@ -267,6 +292,13 @@
     });
     ['#pdv-desconto', '#pdv-desconto-tipo', '#pdv-recebido'].forEach(s => $(s).addEventListener('input', () => renderCart()));
     $('#pdv-forma-pagamento').addEventListener('change', () => atualizarTroco());
+    GF.$$('.pdv-parte').forEach(i => i.addEventListener('input', () => atualizarTroco()));
+    // Duplo clique numa forma do pagamento misto preenche com o que falta para fechar o total.
+    GF.$$('.pdv-parte').forEach(i => i.addEventListener('dblclick', () => {
+      const outras = partesMisto().filter(p => p.forma_pagamento !== i.dataset.forma).reduce((s, p) => s + p.valor, 0);
+      const falta = round(totais().total - outras);
+      if (falta > 0) { i.value = falta.toFixed(2); atualizarTroco(); }
+    }));
     $('#pdv-carrinho-corpo').addEventListener('click', e => {
       const rem = e.target.closest('[data-rem]');
       if (rem) { cart.splice(Number(rem.dataset.rem), 1); selItem = null; renderCart(); return; }

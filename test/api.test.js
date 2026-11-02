@@ -493,3 +493,200 @@ test('Etapa 3: relatório de consumo soma só as produções concluídas', async
   assert.equal(xlsx.buf.slice(0, 2).toString(), 'PK');
   assert.equal((await (await funcEtapa3()).get('/api/reports/consumption')).status, 403);
 });
+
+// ---------------------------------------------------------------- ajustes pedidos pelo Enzo (etapa 4)
+test('Vendas e Saídas: lista única de saídas com filtro por origem e produto, resumo e exportação', async () => {
+  const a = await admin();
+  const hoje = db.util.dataISO();
+  assert.equal((await a.post('/api/sales', { itens: [{ id_produto: 2, quantidade: 1 }], forma_pagamento: 'PIX' })).status, 201);
+  assert.equal((await a.post('/api/losses', { motivo_perda: 'Sobra do dia', itens: [{ id_produto: 2, quantidade: 1 }] })).status, 201);
+
+  const r = await a.get(`/api/movements?tipo=Saída&from=${hoje}&to=${hoje}&resumo=1&limit=50`);
+  assert.equal(r.status, 200);
+  assert.ok(r.movements.every(m => m.tipo_movimentacao === 'Saída'));
+  const venda = r.porOrigem.find(o => o.origem === 'venda'), perda = r.porOrigem.find(o => o.origem === 'perda');
+  assert.ok(venda && perda);
+  assert.equal(Math.round(r.porOrigem.reduce((s, o) => s + o.valor, 0) * 100) / 100, r.valorTotal);
+  assert.equal(r.porOrigem.reduce((s, o) => s + o.registros, 0), r.total);
+
+  const so = await a.get(`/api/movements?tipo=Saída&origem=perda&id_produto=2&limit=50`);
+  assert.ok(so.movements.length >= 1 && so.movements.every(m => m.origem === 'perda' && m.id_produto === 2));
+  assert.equal((await a.get('/api/movements?origem=invalida')).status, 400);
+  assert.equal((await a.get('/api/movements?from=2026-05-10&to=2026-05-01')).status, 400);
+
+  const f = await funcEtapa3(); // todos os perfis veem e exportam as saídas
+  const pdf = await f.raw(`/api/reports/outflows?from=${hoje}&to=${hoje}&format=pdf`);
+  assert.equal(pdf.buf.slice(0, 5).toString(), '%PDF-');
+  const xlsx = await f.raw('/api/reports/outflows?origem=venda&format=xlsx');
+  assert.equal(xlsx.buf.slice(0, 2).toString(), 'PK');
+});
+
+test('Auditoria: mapa aponta o que conferir primeiro e o extrato refaz o saldo de cada movimento', async () => {
+  const a = await admin();
+  // divergência de -2 no Café na conferência + uma saída manual
+  const antes = await saldo(2);
+  assert.equal((await a.post('/api/inventory', { itens: [{ id_produto: 2, quantidade_fisica: antes - 2 }], observacao: 'Contagem de auditoria do café' })).status, 201);
+  assert.equal((await a.post('/api/movements', { tipo_movimentacao: 'Saída', itens: [{ id_produto: 2, quantidade: 1 }], observacao: 'Consumo interno da equipe' })).status, 201);
+
+  const r = await a.get('/api/audit?dias=30');
+  assert.equal(r.status, 200);
+  const m = r.mapa;
+  const cafe = m.itens.find(i => i.id_produto === 2);
+  assert.equal(cafe.divergencia_ultima, -2);
+  assert.equal(cafe.dias_sem_conferir, 0);
+  assert.ok(cafe.ajustes >= 2); // ajuste da conferência + saída manual
+  assert.ok(cafe.motivos.some(t => /Divergência de -2/.test(t)));
+  assert.ok(['Alta', 'Média'].includes(cafe.prioridade));
+  assert.equal(m.resumo.alta + m.resumo.media + m.resumo.baixa, m.itens.length);
+  for (let i = 1; i < m.itens.length; i++) assert.ok(m.itens[i - 1].pontos >= m.itens[i].pontos); // mais urgente primeiro
+  const nunca = m.itens.find(i => !i.conferencias);
+  if (nunca) assert.ok(nunca.motivos.includes('Nunca conferido'));
+  assert.equal((await a.get('/api/audit?dias=0')).status, 400);
+
+  // extrato: saldo depois do movimento mais recente = estoque atual; cada linha encadeia com a anterior
+  const x = (await a.get('/api/audit/products/2')).extrato;
+  assert.equal(x.saldoFinal, await saldo(2));
+  assert.equal(x.movimentos[0].saldo_depois, x.saldoFinal);
+  for (let i = 1; i < x.movimentos.length; i++) assert.equal(x.movimentos[i].saldo_depois, x.movimentos[i - 1].saldo_antes);
+  assert.ok(x.movimentos.some(mv => mv.origem === 'conferencia' && mv.atencao));
+  assert.ok(x.movimentos.some(mv => mv.origem === 'venda' && !mv.atencao));
+  assert.equal(x.conferencias[0].divergencia, -2);
+  // período que termina ontem: o saldo final desconta o que aconteceu depois
+  const ontem = db.util.dataISO(new Date(Date.now() - 86400000));
+  const xo = (await a.get(`/api/audit/products/2?to=${ontem}`)).extrato;
+  assert.ok(xo.movimentos.every(mv => mv.data_movimentacao.slice(0, 10) <= ontem));
+  const ultimoAteOntem = x.movimentos.find(mv => mv.data_movimentacao.slice(0, 10) <= ontem);
+  assert.equal(xo.saldoFinal, ultimoAteOntem ? ultimoAteOntem.saldo_depois : x.saldoInicial);
+  assert.equal((await a.get('/api/audit/products/99999')).status, 404);
+
+  // só Administrador e BackOffice veem a auditoria
+  assert.equal((await (await funcEtapa3()).get('/api/audit')).status, 403);
+  assert.equal((await (await back()).get('/api/audit')).status, 200);
+});
+
+test('Fornecedores: cadastro com WhatsApp normalizado e número disponível na requisição', async () => {
+  const a = await admin();
+  let r = await a.post('/api/suppliers', { nome: 'Moinho Teste WhatsApp', whatsapp: '(11) 91234-5678' });
+  assert.equal(r.status, 201, r.error);
+  assert.equal(r.supplier.whatsapp, '5511912345678');
+  const id = r.supplier.id_fornecedor;
+  assert.equal((await a.post('/api/suppliers', { nome: 'Moinho Teste WhatsApp' })).error, 'Já existe um fornecedor com esse nome.');
+  assert.equal((await a.post('/api/suppliers', { nome: 'Outro', whatsapp: '1234' })).status, 400);
+  assert.equal((await a.put(`/api/suppliers/${id}`, { nome: 'Moinho Teste WhatsApp', whatsapp: '+55 11 3333-4444' })).supplier.whatsapp, '551133334444');
+  assert.equal((await a.put(`/api/suppliers/${id}`, { nome: 'Moinho Teste WhatsApp', whatsapp: '' })).supplier.whatsapp, '');
+  await a.put(`/api/suppliers/${id}`, { nome: 'Moinho Teste WhatsApp', whatsapp: '11 91234-5678' });
+  assert.equal((await a.put('/api/suppliers/99999', { nome: 'Nada Aqui' })).status, 404);
+
+  assert.deepEqual((await a.get('/api/suppliers')).suppliers.includes('Moinho Teste WhatsApp'), true); // lista simples continua igual
+  assert.equal((await a.get('/api/suppliers?detalhe=1')).suppliers.find(f => f.id_fornecedor === id).whatsapp, '5511912345678');
+
+  const req = await a.post('/api/requisitions', { id_produto: 6, quantidade_pedida: 2, fornecedor: 'Moinho Teste WhatsApp' });
+  assert.equal(req.status, 201, req.error);
+  assert.equal(req.requisicao.fornecedor_whatsapp, '5511912345678');
+  assert.equal(req.requisicao.pedido_grupo, null);
+
+  assert.equal((await (await funcEtapa3()).post('/api/suppliers', { nome: 'Fornecedor do Funcionário' })).status, 403);
+});
+
+test('Pedido em massa: vários itens num pedido só, tudo ou nada, e pedidos predefinidos', async () => {
+  const a = await admin();
+  const [[{ n: antes }]] = await db.pool.query('SELECT COUNT(*) AS n FROM requisicao');
+  let r = await a.post('/api/requisitions/batch', {
+    fornecedor: 'Moinho Paulista de Trigo', previsao_entrega: db.util.dataISO(new Date(Date.now() + 2 * 86400000)),
+    itens: [{ id_produto: 13, quantidade_pedida: 50 }, { id_produto: 14, quantidade_pedida: 1.5, valor_unitario: 30 }, { id_produto: 5, quantidade_pedida: 10 }]
+  });
+  assert.equal(r.status, 201, r.error);
+  const p = r.pedido;
+  assert.equal(p.requisicoes.length, 3);
+  assert.match(p.pedido_grupo, /^PED-\d+$/);
+  assert.equal(p.pedido_grupo.slice(4), p.requisicoes[0].codigo_pedido.slice(4)); // PED-<número do 1º item>
+  assert.ok(p.requisicoes.every(x => x.pedido_grupo === p.pedido_grupo && x.situacao === 'Em Aberto' && x.fornecedor === 'Moinho Paulista de Trigo'));
+  assert.equal(p.requisicoes[0].valor_unitario, 3.40); // sem valor informado usa o preço de custo
+  assert.equal(p.valor_total, Math.round((50 * 3.4 + 1.5 * 30 + 10 * 3.2) * 100) / 100);
+
+  // item inválido no meio: nada é gravado
+  const [[{ n: meio }]] = await db.pool.query('SELECT COUNT(*) AS n FROM requisicao');
+  assert.equal(Number(meio), Number(antes) + 3);
+  r = await a.post('/api/requisitions/batch', { fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade_pedida: 10 }, { id_produto: 5, quantidade_pedida: 2.5 }] });
+  assert.equal(r.status, 400); assert.match(r.error, /inteiras/);
+  assert.equal((await a.post('/api/requisitions/batch', { fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade_pedida: 1 }, { id_produto: 13, quantidade_pedida: 2 }] })).status, 400);
+  assert.equal((await a.post('/api/requisitions/batch', { fornecedor: 'Moinho Paulista de Trigo', itens: [] })).status, 400);
+  assert.equal((await a.post('/api/requisitions/batch', { fornecedor: 'Não Existe', itens: [{ id_produto: 13, quantidade_pedida: 1 }] })).status, 400);
+  const [[{ n: depois }]] = await db.pool.query('SELECT COUNT(*) AS n FROM requisicao');
+  assert.equal(Number(depois), Number(meio));
+
+  // receber um item do pedido em massa continua igual (entrada no estoque daquele produto)
+  const s13 = await saldo(13);
+  const rec = await a.patch(`/api/requisitions/${p.requisicoes[0].id_requisicao}/status`, { situacao: 'Finalizado' });
+  assert.equal(rec.status, 200, rec.error);
+  assert.equal(await saldo(13), s13 + 50);
+
+  // pedidos predefinidos
+  let m = await a.post('/api/order-templates', { nome: 'Pedido semanal do moinho', fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade: 100 }, { id_produto: 14, quantidade: 2 }] });
+  assert.equal(m.status, 201, m.error);
+  const idm = m.modelo.id_modelo;
+  assert.equal(m.modelo.itens.length, 2); assert.equal(m.modelo.fornecedor, 'Moinho Paulista de Trigo');
+  assert.equal((await a.post('/api/order-templates', { nome: 'Pedido semanal do moinho', fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade: 1 }] })).status, 400);
+  assert.equal((await a.post('/api/order-templates', { nome: 'Sem itens', fornecedor: 'Moinho Paulista de Trigo', itens: [] })).status, 400);
+  assert.equal((await a.post('/api/order-templates', { nome: 'Fração errada', fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 5, quantidade: 1.5 }] })).status, 400);
+  m = await a.put(`/api/order-templates/${idm}`, { nome: 'Pedido semanal do moinho', fornecedor: 'Moinho Paulista de Trigo', itens: [{ id_produto: 13, quantidade: 75 }] });
+  assert.equal(m.status, 200, m.error);
+  assert.deepEqual(m.modelo.itens.map(i => [i.id_produto, i.quantidade]), [[13, 75]]);
+  const lista = (await (await funcEtapa3()).get('/api/order-templates')).modelos;
+  assert.ok(lista.some(x => x.id_modelo === idm && x.itens[0].nome_produto && x.itens[0].estoque_minimo !== undefined));
+  assert.equal((await a.del(`/api/order-templates/${idm}`)).status, 200);
+  assert.equal((await a.del(`/api/order-templates/${idm}`)).status, 404);
+});
+
+test('Pagamento misto: partes somam o total, troco só da parte em dinheiro, relatório e edição acompanham', async () => {
+  const a = await admin();
+  const total = 2 * 18.90; // 2 cafés
+  const corpo = extra => ({ itens: [{ id_produto: 2, quantidade: 2 }], forma_pagamento: 'Misto', ...extra });
+
+  // validações: nada é gravado
+  const s2 = await saldo(2);
+  assert.equal((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: total }] }))).status, 400);
+  assert.match((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: 20 }, { forma_pagamento: 'Dinheiro', valor: 10 }] }))).error, /soma das formas/);
+  assert.equal((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: 20 }, { forma_pagamento: 'PIX', valor: 17.8 }] }))).status, 400);
+  assert.equal((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'Cheque', valor: 20 }, { forma_pagamento: 'PIX', valor: 17.8 }] }))).status, 400);
+  assert.match((await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: 20 }, { forma_pagamento: 'Dinheiro', valor: 17.8 }], valor_recebido: 10 }))).error, /parte em dinheiro/);
+  assert.equal(await saldo(2), s2);
+
+  const r = await a.post('/api/sales', corpo({ pagamentos: [{ forma_pagamento: 'PIX', valor: 20 }, { forma_pagamento: 'Dinheiro', valor: 7.8 }, { forma_pagamento: 'Cartão Débito', valor: 10 }], valor_recebido: 10 }));
+  assert.equal(r.status, 201, r.error);
+  const v = r.sale;
+  assert.equal(v.forma_pagamento, 'Misto'); assert.equal(v.valor_total, 37.8);
+  assert.equal(v.troco, 2.2); assert.equal(v.valor_recebido, 10);
+  assert.deepEqual(v.pagamentos.map(p => [p.forma_pagamento, p.valor]), [['PIX', 20], ['Dinheiro', 7.8], ['Cartão Débito', 10]]);
+  assert.ok(v.pagamentos.find(p => p.forma_pagamento === 'Cartão Débito').nsu); // cartão autorizado com NSU próprio
+  assert.equal(await saldo(2), s2 - 2);
+
+  // forma única continua igual e também traz a lista de pagamentos
+  const u = (await a.post('/api/sales', { itens: [{ id_produto: 2, quantidade: 1 }], forma_pagamento: 'PIX' })).sale;
+  assert.deepEqual(u.pagamentos.map(p => [p.forma_pagamento, p.valor]), [['PIX', 18.9]]);
+
+  // histórico e busca por forma de pagamento
+  const hist = await a.get(`/api/sales?q=${encodeURIComponent('Débito')}&limit=50`);
+  assert.ok(hist.sales.some(s => s.id_venda === v.id_venda && s.pagamentos.length === 3));
+
+  // relatório: a venda mista entra em cada forma pela sua parte
+  const hoje = db.util.dataISO();
+  const antes = (await a.get(`/api/reports/sales?from=${hoje}&to=${hoje}`)).report;
+  const t = antes.transacoes.find(x => x.id_venda === v.id_venda);
+  assert.equal(t.forma_pagamento, 'Misto (PIX + Dinheiro + Cartão Débito)');
+  assert.equal(Math.round(antes.porPagamento.reduce((s, p) => s + p.total, 0) * 100) / 100, antes.totalGeral);
+
+  // editar a venda: as partes acompanham o novo total na mesma proporção
+  const ed = await a.put(`/api/sales/${v.id_venda}`, { itens: [{ id_produto: 2, quantidade: 1 }] });
+  assert.equal(ed.status, 200, ed.error);
+  assert.equal(ed.sale.valor_total, 18.9);
+  assert.equal(Math.round(ed.sale.pagamentos.reduce((s, p) => s + p.valor, 0) * 100) / 100, 18.9);
+  assert.deepEqual(ed.sale.pagamentos.map(p => p.valor), [10, 3.9, 5]);
+
+  // cancelar e excluir funcionam com o pagamento misto (as partes saem junto)
+  const can = await a.post(`/api/sales/${v.id_venda}/cancel`, { motivo: 'Cliente desistiu da compra', autorizador_email: 'proprietario@padarianovayork.com', autorizador_senha: 'admin123' });
+  assert.equal(can.status, 200, can.error);
+  assert.equal((await a.del(`/api/sales/${v.id_venda}`, { autorizador_email: 'proprietario@padarianovayork.com', autorizador_senha: 'admin123' })).status, 200);
+  const [[{ n }]] = await db.pool.query('SELECT COUNT(*) AS n FROM venda_pagamento WHERE id_venda = ?', [v.id_venda]);
+  assert.equal(Number(n), 0);
+});
