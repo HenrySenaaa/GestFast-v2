@@ -246,6 +246,7 @@
     { label: 'Entrada de Produtos', icon: 'in', desc: 'Recebimentos e reposição', view: 'entradas', k: 'entrada entradas recebimento reposicao', perm: 'movimentos:ver' },
     { label: 'Ficha Técnica', icon: 'book', desc: 'Receitas, custo e margem dos produtos da casa', view: 'fichas', k: 'ficha tecnica receita custo margem insumo rendimento', perm: 'producao:ver' },
     { label: 'Produção', icon: 'flame', desc: 'Registrar fornadas com baixa dos insumos', view: 'producao', k: 'producao produzir fornada assar insumos', perm: 'producao:ver' },
+    { label: 'Caixa', icon: 'coins', desc: 'Abertura, sangria, reforço e fechamento', view: 'caixa', k: 'caixa abertura abrir fechamento fechar sangria reforco gaveta troco' },
     { label: 'Venda (Caixa)', icon: 'cart', desc: 'Registrar vendas no balcão', view: 'vendas', k: 'venda vendas caixa pdv vender carrinho', perm: 'vendas:vender' },
     { label: 'Histórico de Vendas', icon: 'receipt', desc: 'Consultar, editar e cancelar vendas', view: 'historico', k: 'historico vendas cancelar editar consultar', perm: 'vendas:ver' },
     { label: 'Relatórios', icon: 'chart', desc: 'Faturamento e estoque, em PDF ou Excel', view: 'relatorios', k: 'relatorio relatorios faturamento exportar pdf excel', perm: 'relatorios:ver' },

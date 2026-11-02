@@ -82,9 +82,10 @@
     const s = GF.state.settings;
     $('#form-config').classList.toggle('is-hidden', !admin);
     const ro = $('#cfg-readonly'); ro.classList.toggle('is-hidden', admin);
-    ro.innerHTML = `<p><strong>Estabelecimento:</strong> ${esc(s.estabelecimento)}</p><p><strong>Desconto máximo no caixa:</strong> ${esc(s.descontoMaximoPercent)}% do subtotal</p><p><strong>Aviso de validade:</strong> ${esc(s.diasAlertaValidade)} dia(s) antes de vencer</p><p class="muted">Somente o Administrador pode alterar os parâmetros.</p>`;
+    ro.innerHTML = `<p><strong>Estabelecimento:</strong> ${esc(s.estabelecimento)}</p><p><strong>Desconto máximo no caixa:</strong> ${esc(s.descontoMaximoPercent)}% do subtotal</p><p><strong>Aviso de validade:</strong> ${esc(s.diasAlertaValidade)} dia(s) antes de vencer</p><p><strong>Caixa aberto para vender:</strong> ${s.exigirCaixaAberto ? 'exigido' : 'não exigido'}</p><p class="muted">Somente o Administrador pode alterar os parâmetros.</p>`;
     if (admin) {
       $('#cfg-estabelecimento').value = s.estabelecimento; $('#cfg-desconto').value = s.descontoMaximoPercent; $('#cfg-intervalo').value = s.intervaloAtualizacaoSeg; $('#cfg-validade').value = s.diasAlertaValidade;
+      $('#cfg-exigir-caixa').checked = !!s.exigirCaixaAberto; $('#cfg-balanca-modo').value = s.balancaModo; $('#cfg-balanca-digitos').value = String(s.balancaDigitosCodigo);
       $('#cfg-sim-cartao').checked = !!s.simularCartaoNegado; $('#cfg-sim-fornecedor').checked = !!s.simularFornecedorIndisponivel;
     }
     carregarLogs();
@@ -113,6 +114,7 @@
       try {
         const r = await GF.put('/api/settings', {
           estabelecimento: $('#cfg-estabelecimento').value, descontoMaximoPercent: Number($('#cfg-desconto').value), intervaloAtualizacaoSeg: Number($('#cfg-intervalo').value), diasAlertaValidade: Number($('#cfg-validade').value),
+          exigirCaixaAberto: $('#cfg-exigir-caixa').checked, balancaModo: $('#cfg-balanca-modo').value, balancaDigitosCodigo: Number($('#cfg-balanca-digitos').value),
           simularCartaoNegado: $('#cfg-sim-cartao').checked, simularFornecedorIndisponivel: $('#cfg-sim-fornecedor').checked
         });
         GF.state.settings = r.settings; GF.toast(r.message, 'success'); carregarLogs();

@@ -6,6 +6,7 @@ const { pool, transacao, testarConexao } = require('./database/conexao');
 const { erro } = require('./lib/errors');
 const auth = require('./lib/auth');
 const gateways = require('./lib/gateways');
+const { lerEtiqueta } = require('./lib/balanca');
 
 // ------------------------------------------------------------------ utilitários
 const pad = n => String(n).padStart(2, '0');
@@ -111,7 +112,7 @@ function mapVenda(v, itens, partes) {
     desconto: v.desconto, desconto_tipo: v.desconto_tipo, desconto_informado: v.desconto_informado, valor_total: v.valor_total,
     forma_pagamento: v.forma_pagamento, valor_recebido: v.valor_recebido, troco: v.troco, nsu: v.nsu,
     pagamentos: v.forma_pagamento === 'Misto' ? (partes || []) : [{ forma_pagamento: v.forma_pagamento, valor: v.valor_total, nsu: v.nsu }],
-    status_venda: v.status_venda, id_usuario: v.id_usuario, usuario_nome: v.usuario_nome, itens
+    status_venda: v.status_venda, id_usuario: v.id_usuario, usuario_nome: v.usuario_nome, id_caixa: v.id_caixa, itens
   };
   if (v.status_venda === 'Cancelada') {
     Object.assign(o, {
@@ -161,6 +162,9 @@ class Database {
     const [etapa4] = await pool.query(
       "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'venda_pagamento'");
     if (!etapa4.length) throw erro('O banco ainda não tem as tabelas da etapa 4 (pedido em massa e pagamento misto). Rode database/migracao-etapa4.sql no MySQL Workbench.', 500);
+    const [etapa5] = await pool.query(
+      "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'caixa'");
+    if (!etapa5.length) throw erro('O banco ainda não tem as tabelas da etapa 5 (caixa, balança e venda em espera). Rode database/migracao-etapa5.sql no MySQL Workbench.', 500);
   }
 
   // Transação: roda fn(conn); no fim atualiza os alertas de estoque; erro = rollback de tudo.
@@ -228,7 +232,10 @@ class Database {
       intervaloAtualizacaoSeg: Number(r.intervalo_atualizacao_seg),
       simularCartaoNegado: bool(r.simular_cartao_negado),
       simularFornecedorIndisponivel: bool(r.simular_fornecedor_indisponivel),
-      diasAlertaValidade: Number(r.dias_alerta_validade)
+      diasAlertaValidade: Number(r.dias_alerta_validade),
+      exigirCaixaAberto: bool(r.exigir_caixa_aberto),
+      balancaModo: r.balanca_modo,
+      balancaDigitosCodigo: Number(r.balanca_digitos_codigo)
     };
   }
 
@@ -255,11 +262,22 @@ class Database {
         if (!Number.isInteger(n) || n < 0 || n > 60) throw erro('O aviso de validade deve ser de 0 a 60 dias de antecedência.');
         s.diasAlertaValidade = n;
       }
-      ['simularCartaoNegado', 'simularFornecedorIndisponivel'].forEach(k => { if (d[k] !== undefined) s[k] = !!d[k]; });
+      if (d.balancaModo !== undefined) {
+        if (!['peso', 'preco'].includes(d.balancaModo)) throw erro('A etiqueta da balança traz peso ou preço.');
+        s.balancaModo = d.balancaModo;
+      }
+      if (d.balancaDigitosCodigo !== undefined) {
+        const n = Number(d.balancaDigitosCodigo);
+        if (![4, 5, 6].includes(n)) throw erro('O código do produto na etiqueta tem 4, 5 ou 6 dígitos.');
+        s.balancaDigitosCodigo = n;
+      }
+      ['simularCartaoNegado', 'simularFornecedorIndisponivel', 'exigirCaixaAberto'].forEach(k => { if (d[k] !== undefined) s[k] = !!d[k]; });
       await c.query(
         `UPDATE configuracao SET estabelecimento = ?, desconto_maximo_percent = ?, intervalo_atualizacao_seg = ?,
-           simular_cartao_negado = ?, simular_fornecedor_indisponivel = ?, dias_alerta_validade = ? WHERE id = 1`,
-        [s.estabelecimento, s.descontoMaximoPercent, s.intervaloAtualizacaoSeg, s.simularCartaoNegado, s.simularFornecedorIndisponivel, s.diasAlertaValidade]
+           simular_cartao_negado = ?, simular_fornecedor_indisponivel = ?, dias_alerta_validade = ?,
+           exigir_caixa_aberto = ?, balanca_modo = ?, balanca_digitos_codigo = ? WHERE id = 1`,
+        [s.estabelecimento, s.descontoMaximoPercent, s.intervaloAtualizacaoSeg, s.simularCartaoNegado, s.simularFornecedorIndisponivel, s.diasAlertaValidade,
+          s.exigirCaixaAberto, s.balancaModo, s.balancaDigitosCodigo]
       );
       return s;
     });
@@ -511,8 +529,22 @@ class Database {
     const descricao = validarTexto(data.descricao, 'A descrição do produto', { min: 10, max: 5000 });
     const validade = txt(data.validade);
     if (validade && !DATA_RE.test(validade)) throw erro('A data de validade é inválida.');
-    return { nome, venda: r2(venda), custo: r2(custo), min: r2(min), max: r2(max), emin: r3(emin), qtd: r3(qtd), unidade, cat, descricao, validade,
+    const balanca = await this.validarCodigoBalanca(data, existente, { unidade, tipo }, c);
+    return { nome, balanca, venda: r2(venda), custo: r2(custo), min: r2(min), max: r2(max), emin: r3(emin), qtd: r3(qtd), unidade, cat, descricao, validade,
       tipo, unidadeCompra: unidadeCompra || null, fator: r3(fator) };
+  }
+
+  // Código do produto na etiqueta da balança: opcional, único e só para o que é vendido por peso ou volume.
+  async validarCodigoBalanca(data, existente, { unidade, tipo }, c) {
+    if (data.codigo_balanca === undefined) return existente ? existente.codigo_balanca : null;
+    if (data.codigo_balanca === '' || data.codigo_balanca === null) return null;
+    const cod = Number(data.codigo_balanca);
+    const { balancaDigitosCodigo: digitos } = await this.getSettings(c);
+    if (!Number.isInteger(cod) || cod <= 0 || String(cod).length > digitos) throw erro(`O código na balança deve ser um número de até ${digitos} dígitos.`);
+    if (tipo === 'Insumo' || !aceitaFracao(unidade)) throw erro('Só produto vendido em KG ou litro pode ter código na balança.');
+    const [uso] = await c.query('SELECT nome_produto FROM produto WHERE codigo_balanca = ? AND id_produto <> ?', [cod, existente ? existente.id_produto : 0]);
+    if (uso.length) throw erro(`O código na balança ${cod} já está em "${uso[0].nome_produto}".`);
+    return cod;
   }
 
   async codigoEmUso(cod, excetoId, c) {
@@ -536,7 +568,7 @@ class Database {
         nome_produto: v.nome, descricao: v.descricao, unidade: v.unidade, peso: txt(data.peso),
         preco_custo: v.custo, preco_venda: v.venda, preco_min: v.min, preco_max: v.max, quantidade_estoque: v.qtd,
         estoque_minimo: v.emin, id_categoria: v.cat, lote: txt(data.lote), validade: v.validade || null,
-        tipo: v.tipo, unidade_compra: v.unidadeCompra, fator_conversao: v.fator
+        tipo: v.tipo, unidade_compra: v.unidadeCompra, fator_conversao: v.fator, codigo_balanca: v.balanca
       };
       if (data.imagem !== undefined) campos.imagem = txt(data.imagem);
       if (existente) {
@@ -1089,6 +1121,9 @@ class Database {
       const misto = forma === 'Misto';
       if (!misto && !FORMAS_PAGAMENTO.includes(forma)) throw erro('Forma de pagamento inválida.');
       const cfg = await this.getSettings(c);
+      // A trava faz o fechamento esperar esta venda terminar (ou esta venda ver o caixa já fechado).
+      const caixa = await this.caixaAberto(c, true);
+      if (!caixa && cfg.exigirCaixaAberto) throw erro('O caixa está fechado. Abra o caixa antes de vender.', 409);
 
       const produtos = new Map();
       const linhas = new Map();
@@ -1145,10 +1180,10 @@ class Database {
       // Código provisório; depois vira VENDA-(1000 + id), como na versão anterior.
       const [r] = await c.query(
         `INSERT INTO venda (codigo_venda, data_venda, valor_subtotal, desconto, desconto_tipo, desconto_informado, valor_total,
-           forma_pagamento, valor_recebido, troco, nsu, status_venda, id_usuario)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Concluída', ?)`,
+           forma_pagamento, valor_recebido, troco, nsu, status_venda, id_usuario, id_caixa)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Concluída', ?, ?)`,
         [`TMP-${auth.newToken().slice(0, 12)}`, dataHora(), subtotal, desc.valor, desc.tipo, Number(data.desconto) || 0, total, forma,
-          recebido, troco, nsu, ator.id_usuario]
+          recebido, troco, nsu, ator.id_usuario, caixa ? caixa.id_caixa : null]
       );
       const codigo = `VENDA-${1000 + r.insertId}`;
       await c.query('UPDATE venda SET codigo_venda = ? WHERE id_venda = ?', [codigo, r.insertId]);
@@ -1211,6 +1246,7 @@ class Database {
       if (!venda) throw erro('Venda não encontrada.', 404);
       if (venda.status_venda === 'Cancelada') throw erro('Esta venda já está cancelada.');
       const motivo = validarTexto(body.motivo, 'O motivo do cancelamento', { obrigatorio: true });
+      await this.devolverDinheiroAoCancelar(c, venda, ator);
       await this.estornarItensVenda(c, venda, ator, 'Estorno de estoque por cancelamento');
       await c.query(
         `UPDATE venda SET status_venda = 'Cancelada', motivo_cancelamento = ?, cancelada_por = ?, autorizada_por = ?, data_cancelamento = ?
@@ -1226,6 +1262,7 @@ class Database {
       const venda = await this.getVenda(id, c, true);
       if (!venda) throw erro('Venda não encontrada.', 404);
       if (venda.status_venda !== 'Concluída') throw erro('Somente vendas concluídas podem ser editadas.');
+      await this.exigirCaixaDaVendaAberto(c, venda);
       const novos = Array.isArray(body.itens) ? body.itens : [];
       const produtos = new Map();
       const quantidades = new Map();
@@ -1290,10 +1327,258 @@ class Database {
     return this.tx(async c => {
       const venda = await this.getVenda(id, c, true);
       if (!venda) throw erro('Venda não encontrada.', 404);
+      await this.exigirCaixaDaVendaAberto(c, venda);
       if (venda.status_venda === 'Concluída') await this.estornarItensVenda(c, venda, ator, 'Estorno de estoque por exclusão');
       await c.query('DELETE FROM venda WHERE id_venda = ?', [venda.id_venda]);
       return venda;
     });
+  }
+
+  // ---------------------------------------------------------------- etiqueta da balança
+  async lerEtiquetaBalanca(codigo) {
+    const cod = txt(codigo);
+    const [mesmo] = await pool.query('SELECT nome_produto FROM produto WHERE codigo_barras = ?', [cod]);
+    if (mesmo.length) throw erro(`Este é o código de barras de "${mesmo[0].nome_produto}", não uma etiqueta de balança.`);
+    const cfg = await this.getSettings();
+    const et = lerEtiqueta(cod, cfg.balancaDigitosCodigo);
+    if (!et) throw erro('Este código não é uma etiqueta de balança.', 404);
+    if (!et.dvOk) throw erro('Etiqueta com dígito verificador errado. Leia ou digite o código de novo.');
+    const [rows] = await pool.query('SELECT * FROM produto WHERE codigo_balanca = ?', [et.codigo]);
+    const prod = mapProduto(rows[0]);
+    if (!prod) throw erro(`Nenhum produto com o código ${et.codigo} na balança.`, 404);
+    if (prod.status !== 'Ativo') throw erro(`"${prod.nome_produto}" está inativo e não pode ser vendido.`);
+    if (prod.tipo === 'Insumo' || !aceitaFracao(prod.unidade)) throw erro(`"${prod.nome_produto}" não é vendido por peso ou volume.`);
+    const quantidade = r3(cfg.balancaModo === 'peso' ? et.valor / 1000 : et.valor / 100 / prod.preco_venda);
+    if (!(quantidade > 0)) throw erro('A etiqueta está sem peso ou preço.');
+    return { id_produto: prod.id_produto, nome_produto: prod.nome_produto, unidade: prod.unidade, quantidade, modo: cfg.balancaModo };
+  }
+
+  // ---------------------------------------------------------------- venda em espera
+  // Só guarda o carrinho: não reserva estoque, que é checado de novo ao finalizar.
+  guardarEspera(body, ator) {
+    return this.tx(async c => {
+      const itens = Array.isArray(body.itens) ? body.itens : [];
+      if (!itens.length) throw erro('Não há itens para colocar em espera.');
+      const linhas = [];
+      for (const it of itens) {
+        const prod = await this.getProductById(it.id_produto, c);
+        if (!prod) throw erro('Produto não cadastrado.', 404);
+        linhas.push({ id_produto: prod.id_produto, quantidade: validarQuantidade(prod, it.quantidade) });
+      }
+      const desconto = Number(body.desconto) || 0;
+      if (desconto < 0) throw erro('O desconto não pode ser negativo.');
+      const tipo = body.desconto_tipo === 'percentual' ? 'percentual' : 'valor';
+      const [r] = await c.query('INSERT INTO venda_espera (rotulo, itens, desconto, desconto_tipo, criada_em, id_usuario) VALUES (?, ?, ?, ?, ?, ?)',
+        [txt(body.rotulo).slice(0, 60) || null, JSON.stringify(linhas), r2(desconto), tipo, dataHora(), ator.id_usuario]);
+      return { id_espera: r.insertId };
+    });
+  }
+
+  // Monta os itens com o cadastro de agora; o que saiu de linha volta em `removidos`.
+  async montarEspera(e, c = pool) {
+    const [prods] = await c.query('SELECT id_produto, nome_produto, unidade, preco_venda, status, tipo FROM produto WHERE id_produto IN (?)', [e.itens.map(i => i.id_produto)]);
+    const porId = new Map(prods.map(p => [p.id_produto, p]));
+    const itens = [], removidos = [];
+    for (const i of e.itens) {
+      const p = porId.get(i.id_produto);
+      if (p && p.status === 'Ativo' && p.tipo !== 'Insumo') itens.push({ id_produto: p.id_produto, nome_produto: p.nome_produto, unidade: p.unidade, preco_venda: p.preco_venda, quantidade: i.quantidade });
+      else removidos.push(p ? p.nome_produto : `Produto ${i.id_produto}`);
+    }
+    return {
+      id_espera: e.id_espera, rotulo: e.rotulo || '', desconto: e.desconto, desconto_tipo: e.desconto_tipo,
+      criada_em: hm(e.criada_em), usuario_nome: e.usuario_nome, itens, removidos,
+      total: r2(itens.reduce((s, i) => s + i.quantidade * i.preco_venda, 0))
+    };
+  }
+
+  async listEspera() {
+    const [rows] = await pool.query(
+      'SELECT e.*, u.nome AS usuario_nome FROM venda_espera e JOIN usuario u ON u.id_usuario = e.id_usuario ORDER BY e.id_espera');
+    return Promise.all(rows.map(e => this.montarEspera(e)));
+  }
+
+  retomarEspera(id) {
+    return this.tx(async c => {
+      const [rows] = await c.query(
+        'SELECT e.*, u.nome AS usuario_nome FROM venda_espera e JOIN usuario u ON u.id_usuario = e.id_usuario WHERE e.id_espera = ? FOR UPDATE', [idNum(id)]);
+      if (!rows[0]) throw erro('Esta venda em espera não existe mais.', 404);
+      const espera = await this.montarEspera(rows[0], c);
+      await c.query('DELETE FROM venda_espera WHERE id_espera = ?', [rows[0].id_espera]);
+      return espera;
+    });
+  }
+
+  async descartarEspera(id) {
+    const [r] = await pool.query('DELETE FROM venda_espera WHERE id_espera = ?', [idNum(id)]);
+    if (!r.affectedRows) throw erro('Esta venda em espera não existe mais.', 404);
+  }
+
+  // ---------------------------------------------------------------- caixa (único da loja)
+  async caixaAberto(c = pool, lock = false) {
+    const [rows] = await c.query(`SELECT * FROM caixa WHERE aberto = 1${lock ? ' FOR UPDATE' : ''}`);
+    return rows[0];
+  }
+
+  // Calculado na hora: cancelar ou editar uma venda do caixa aberto já muda o esperado.
+  async resumoCaixa(cx, c = pool) {
+    const [vendas] = await c.query(
+      `SELECT forma_pagamento AS forma, SUM(valor_total) AS total FROM venda
+         WHERE id_caixa = ? AND status_venda = 'Concluída' AND forma_pagamento <> 'Misto' GROUP BY forma_pagamento
+       UNION ALL
+       SELECT vp.forma_pagamento, SUM(vp.valor) FROM venda v JOIN venda_pagamento vp ON vp.id_venda = v.id_venda
+         WHERE v.id_caixa = ? AND v.status_venda = 'Concluída' AND v.forma_pagamento = 'Misto' GROUP BY vp.forma_pagamento`,
+      [cx.id_caixa, cx.id_caixa]);
+    const [[{ n }]] = await c.query("SELECT COUNT(*) AS n FROM venda WHERE id_caixa = ? AND status_venda = 'Concluída'", [cx.id_caixa]);
+    const [movs] = await c.query('SELECT tipo, SUM(valor) AS total FROM caixa_movimento WHERE id_caixa = ? GROUP BY tipo', [cx.id_caixa]);
+    const porForma = Object.fromEntries(FORMAS_PAGAMENTO.map(f => [f, 0]));
+    for (const v of vendas) porForma[v.forma] = r2(porForma[v.forma] + Number(v.total));
+    const mov = t => r2((movs.find(m => m.tipo === t) || { total: 0 }).total);
+    const resumo = { vendas: Number(n), porForma, reforcos: mov('reforco'), sangrias: mov('sangria'), estornos: mov('estorno') };
+    resumo.esperado = r2(cx.troco_inicial + porForma.Dinheiro + resumo.reforcos - resumo.sangrias - resumo.estornos);
+    return resumo;
+  }
+
+  async movimentosCaixa(id, c = pool) {
+    const [rows] = await c.query(
+      `SELECT m.id_movimento, m.tipo, m.valor, m.motivo, m.data_movimento, u.nome AS usuario_nome
+       FROM caixa_movimento m JOIN usuario u ON u.id_usuario = m.id_usuario WHERE m.id_caixa = ? ORDER BY m.id_movimento`, [id]);
+    return rows.map(m => ({ ...m, data_movimento: hm(m.data_movimento) }));
+  }
+
+  // Contagem cega: sem `verEsperado`, o caixa aberto não leva esperado nem totais.
+  async mapCaixa(cx, verEsperado, c = pool) {
+    const [nomes] = await c.query('SELECT id_usuario, nome FROM usuario WHERE id_usuario IN (?)', [[cx.id_usuario_abertura, cx.id_usuario_fechamento || 0]]);
+    const nome = id => (nomes.find(u => u.id_usuario === id) || {}).nome || '';
+    const o = {
+      id_caixa: cx.id_caixa, status: cx.status, data_abertura: hm(cx.data_abertura), aberto_por: nome(cx.id_usuario_abertura),
+      troco_inicial: cx.troco_inicial, movimentos: await this.movimentosCaixa(cx.id_caixa, c)
+    };
+    if (cx.status === 'Fechado') {
+      Object.assign(o, {
+        data_fechamento: hm(cx.data_fechamento), fechado_por: nome(cx.id_usuario_fechamento), valor_contado: cx.valor_contado,
+        observacao: cx.observacao || '', esperado: cx.valor_esperado, diferenca: cx.diferenca, resumo: cx.resumo
+      });
+    } else if (verEsperado) {
+      o.resumo = await this.resumoCaixa(cx, c);
+      o.esperado = o.resumo.esperado;
+    }
+    return o;
+  }
+
+  async getCaixaAtual(verEsperado) {
+    const cx = await this.caixaAberto();
+    return cx ? this.mapCaixa(cx, verEsperado) : null;
+  }
+
+  abrirCaixa(body, ator) {
+    return this.tx(async c => {
+      // Sem trava: dois FOR UPDATE em linha inexistente dariam deadlock. Quem garante o caixa único é o UNIQUE.
+      if (await this.caixaAberto(c)) throw erro('Já existe um caixa aberto.', 409);
+      if (body.troco_inicial === undefined || body.troco_inicial === '' || body.troco_inicial === null) throw erro('Informe o troco inicial (pode ser zero).');
+      const troco = Number(body.troco_inicial);
+      if (!Number.isFinite(troco) || troco < 0) throw erro('O troco inicial não pode ser negativo.');
+      let r;
+      try {
+        [r] = await c.query('INSERT INTO caixa (data_abertura, id_usuario_abertura, troco_inicial) VALUES (?, ?, ?)', [dataHora(), ator.id_usuario, r2(troco)]);
+      } catch (e) {
+        if (e.code === 'ER_DUP_ENTRY') throw erro('Já existe um caixa aberto.', 409);
+        throw e;
+      }
+      const [[cx]] = await c.query('SELECT * FROM caixa WHERE id_caixa = ?', [r.insertId]);
+      return this.mapCaixa(cx, false, c);
+    });
+  }
+
+  // Sem limite pelo saldo: um erro de "acima do esperado" entregaria o valor da contagem cega.
+  movimentarCaixa(body, ator) {
+    return this.tx(async c => {
+      const cx = await this.caixaAberto(c, true);
+      if (!cx) throw erro('O caixa está fechado.', 409);
+      if (!['sangria', 'reforco'].includes(body.tipo)) throw erro('Movimento de caixa inválido.');
+      const valor = Number(body.valor);
+      if (!Number.isFinite(valor) || r2(valor) <= 0) throw erro('Informe um valor maior que zero.');
+      const motivo = validarTexto(body.motivo, 'O motivo', { obrigatorio: true, min: 3, max: 255 });
+      await c.query('INSERT INTO caixa_movimento (id_caixa, tipo, valor, motivo, data_movimento, id_usuario) VALUES (?, ?, ?, ?, ?, ?)',
+        [cx.id_caixa, body.tipo, r2(valor), motivo, dataHora(), ator.id_usuario]);
+      return { tipo: body.tipo, valor: r2(valor) };
+    });
+  }
+
+  // A trava vem primeiro: as somas enxergam toda venda concluída antes do fechamento.
+  fecharCaixa(body, ator) {
+    return this.tx(async c => {
+      const cx = await this.caixaAberto(c, true);
+      if (!cx) throw erro('O caixa já está fechado.', 409);
+      if (body.valor_contado === undefined || body.valor_contado === '' || body.valor_contado === null) throw erro('Informe o valor contado na gaveta.');
+      const contado = Number(body.valor_contado);
+      if (!Number.isFinite(contado) || contado < 0) throw erro('O valor contado não pode ser negativo.');
+      const resumo = await this.resumoCaixa(cx, c);
+      await c.query(
+        `UPDATE caixa SET status = 'Fechado', data_fechamento = ?, id_usuario_fechamento = ?, valor_esperado = ?, valor_contado = ?, diferenca = ?, resumo = ?
+         WHERE id_caixa = ?`,
+        [dataHora(), ator.id_usuario, resumo.esperado, r2(contado), r2(contado - resumo.esperado), JSON.stringify(resumo), cx.id_caixa]);
+      const [[fechado]] = await c.query('SELECT * FROM caixa WHERE id_caixa = ?', [cx.id_caixa]);
+      return this.mapCaixa(fechado, true, c);
+    });
+  }
+
+  // Justificativa da diferença: só depois de fechar, porque exigir antes revelaria que a contagem não bateu.
+  justificarCaixa(id, body) {
+    return this.tx(async c => {
+      const [[cx]] = await c.query('SELECT * FROM caixa WHERE id_caixa = ? FOR UPDATE', [idNum(id)]);
+      if (!cx) throw erro('Caixa não encontrado.', 404);
+      if (cx.status !== 'Fechado') throw erro('O caixa ainda está aberto.');
+      if (cx.observacao) throw erro('Este fechamento já tem observação.');
+      const observacao = validarTexto(body.observacao, 'A observação', { obrigatorio: true, min: 3, max: 1000 });
+      await c.query('UPDATE caixa SET observacao = ? WHERE id_caixa = ?', [observacao, cx.id_caixa]);
+      return { id_caixa: cx.id_caixa, observacao };
+    });
+  }
+
+  filtroCaixas({ from, to }) {
+    const where = [], params = [];
+    if (DATA_RE.test(from || '')) { where.push('data_abertura >= ?'); params.push(`${from} 00:00:00`); }
+    if (DATA_RE.test(to || '')) { where.push('data_abertura <= ?'); params.push(`${to} 23:59:59`); }
+    return { filtro: where.length ? ` WHERE ${where.join(' AND ')}` : '', params };
+  }
+
+  async listCaixas({ from, to, limite, offset } = {}) {
+    const { filtro, params } = this.filtroCaixas({ from, to });
+    const [rows] = await pool.query(`SELECT * FROM caixa${filtro} ORDER BY id_caixa DESC${paginar(limite, offset)}`, params);
+    return Promise.all(rows.map(cx => this.mapCaixa(cx, true)));
+  }
+
+  async contarCaixas(f) {
+    const { filtro, params } = this.filtroCaixas(f);
+    const [[r]] = await pool.query(`SELECT COUNT(*) AS n FROM caixa${filtro}`, params);
+    return { total: Number(r.n) };
+  }
+
+  async getCaixa(id) {
+    const [[cx]] = await pool.query('SELECT * FROM caixa WHERE id_caixa = ?', [idNum(id)]);
+    return cx ? this.mapCaixa(cx, true) : undefined;
+  }
+
+  async statusCaixaDaVenda(c, venda) {
+    if (!venda.id_caixa) return null;
+    const [[cx]] = await c.query('SELECT status FROM caixa WHERE id_caixa = ? FOR UPDATE', [venda.id_caixa]);
+    return cx.status;
+  }
+
+  // Um fechamento conferido não muda: venda de caixa fechado só pode ser cancelada.
+  async exigirCaixaDaVendaAberto(c, venda) {
+    if (await this.statusCaixaDaVenda(c, venda) === 'Fechado') throw erro('Esta venda é de um caixa já fechado. Cancele e lance de novo.');
+  }
+
+  // Caixa fechado: o dinheiro da venda cancelada sai do caixa de agora, e o esperado do fechamento antigo fica como está.
+  async devolverDinheiroAoCancelar(c, venda, ator) {
+    if (await this.statusCaixaDaVenda(c, venda) !== 'Fechado') return;
+    const dinheiro = r2(venda.pagamentos.filter(p => p.forma_pagamento === 'Dinheiro').reduce((s, p) => s + p.valor, 0));
+    if (dinheiro <= 0) return;
+    const atual = await this.caixaAberto(c, true);
+    if (!atual) throw erro('Esta venda teve dinheiro e é de um caixa já fechado. Abra o caixa para registrar a devolução.', 409);
+    await c.query('INSERT INTO caixa_movimento (id_caixa, tipo, valor, motivo, data_movimento, id_usuario, id_venda) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [atual.id_caixa, 'estorno', dinheiro, `Cancelamento da ${venda.codigo_venda}`, dataHora(), ator.id_usuario, venda.id_venda]);
   }
 
   // ---------------------------------------------------------------- conferência de inventário (RF 06)

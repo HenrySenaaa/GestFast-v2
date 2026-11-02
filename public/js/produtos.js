@@ -3,7 +3,7 @@
   'use strict';
   const GF = window.GF, $ = GF.$, esc = GF.esc;
   let lista = [], imagemData = null, editando = null;
-  const campos = ['nome', 'codigo', 'unidade-compra', 'fator-conversao', 'preco-custo', 'preco-min', 'estoque-minimo', 'peso', 'unidade', 'preco-venda', 'preco-max', 'categoria', 'estoque-atual', 'lote', 'validade', 'descricao'];
+  const campos = ['nome', 'codigo', 'codigo-balanca', 'unidade-compra', 'fator-conversao', 'preco-custo', 'preco-min', 'estoque-minimo', 'peso', 'unidade', 'preco-venda', 'preco-max', 'categoria', 'estoque-atual', 'lote', 'validade', 'descricao'];
   const f = id => $(`#prod-${id}`);
 
   function ajustarUnidade() {
@@ -44,6 +44,7 @@
     f('lote').value = p.lote || ''; f('validade').value = p.validade || ''; f('descricao').value = p.descricao || '';
     f('tipo').value = p.tipo || 'Revenda'; f('unidade-compra').value = p.unidade_compra || '';
     f('fator-conversao').value = p.unidade_compra ? p.fator_conversao : '';
+    f('codigo-balanca').value = p.codigo_balanca || '';
     ajustarTipo();
     $('#prod-preview-img').src = GF.imgFor(p);
     $('#btn-salvar-produto').innerHTML = `${GF.icon('check', 'icon icon-sm')} Confirmar alterações`;
@@ -85,7 +86,8 @@
       unidade: f('unidade').value, peso: f('peso').value.trim(), preco_custo: f('preco-custo').value, preco_venda: f('preco-venda').value,
       preco_min: f('preco-min').value, preco_max: f('preco-max').value, estoque_minimo: f('estoque-minimo').value,
       quantidade_estoque: f('estoque-atual').value, id_categoria: Number(f('categoria').value), lote: f('lote').value.trim(), validade: f('validade').value,
-      tipo: f('tipo').value, unidade_compra: f('unidade-compra').value.trim(), fator_conversao: f('fator-conversao').value
+      tipo: f('tipo').value, unidade_compra: f('unidade-compra').value.trim(), fator_conversao: f('fator-conversao').value,
+      codigo_balanca: f('codigo-balanca').value
     };
     if (imagemData) body.imagem_data = imagemData;
     try {

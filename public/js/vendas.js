@@ -90,23 +90,44 @@
     const q = Number(qEl.value);
     if (!(q > 0)) { GF.marcarErro(qEl); GF.toast('Informe uma quantidade maior que zero.', 'error'); return; }
     if (!GF.fractional(p.unidade) && !Number.isInteger(q)) { GF.marcarErro(qEl); GF.toast(`${p.nome_produto} é vendido em ${p.unidade}: informe uma quantidade inteira.`, 'error'); qEl.value = Math.max(1, Math.round(q)); return; }
+    if (!(await lancar(p, q, qEl))) return;
+    qEl.value = 1; qEl.classList.remove('input-error');
+    $('#pdv-busca-codigo').focus();
+  }
+
+  // Põe o item no carrinho, com as checagens de estoque e validade. `el` é o campo marcado em caso de erro.
+  async function lancar(p, q, el) {
     const disp = round(p.quantidade_estoque - noCarrinho(p.id_produto), 3);
-    if (q > disp) { GF.marcarErro(qEl); GF.toast(`Quantidade indisponível em estoque! Disponível: ${GF.qty(disp)} ${p.unidade}.`, 'error'); return; }
+    if (q > disp) { GF.marcarErro(el); GF.toast(`Quantidade indisponível em estoque! Disponível: ${GF.qty(disp)} ${p.unidade}.`, 'error'); return false; }
     const val = GF.validade(p.validade);
-    if (val && val.vencido && !(await GF.confirm(`"${p.nome_produto}" está VENCIDO (validade ${GF.date(p.validade)}). Deseja adicionar ao pedido mesmo assim?`, { okLabel: 'Adicionar mesmo assim', danger: true, title: 'Produto vencido' }))) return;
+    if (val && val.vencido && !(await GF.confirm(`"${p.nome_produto}" está VENCIDO (validade ${GF.date(p.validade)}). Deseja adicionar ao pedido mesmo assim?`, { okLabel: 'Adicionar mesmo assim', danger: true, title: 'Produto vencido' }))) return false;
     const ex = cart.find(i => i.id_produto === p.id_produto);
     if (ex) ex.qtd = round(ex.qtd + q, 3);
     else cart.push({ id_produto: p.id_produto, nome: p.nome_produto, unidade: p.unidade, preco: p.preco_venda, qtd: round(q, 3) });
     selItem = null;
-    qEl.value = 1; qEl.classList.remove('input-error');
     renderCart();
-    $('#pdv-busca-codigo').focus();
+    return true;
+  }
+
+  // Etiqueta da balança: o servidor lê o código e o item entra direto, com o peso da etiqueta.
+  async function lerEtiqueta(codigo) {
+    const campo = $('#pdv-busca-codigo');
+    try {
+      const { etiqueta: e } = await GF.get(`/api/sales/etiqueta/${codigo}`);
+      const p = prod(e.id_produto);
+      if (!p) { GF.marcarErro(campo); GF.toast(`"${e.nome_produto}" não está disponível para venda.`, 'error'); return; }
+      if (!(await lancar(p, e.quantidade, campo))) return;
+      campo.value = ''; campo.classList.remove('input-error');
+      GF.toast(`${e.nome_produto}: ${GF.qty(e.quantidade)} ${e.unidade}`, 'success');
+    } catch (err) { GF.marcarErro(campo); }
+    campo.focus();
   }
 
   function buscarCodigo() {
     const t = $('#pdv-busca-codigo').value.trim().toLowerCase();
     if (!t) return;
     let achados = produtos.filter(p => p.codigo_barras.toLowerCase() === t);
+    if (!achados.length && /^2\d{12}$/.test(t)) { lerEtiqueta(t); return; }
     if (!achados.length) achados = produtos.filter(p => `${p.nome_produto} ${p.codigo_barras}`.toLowerCase().includes(t));
     if (!achados.length) { GF.toast('Produto não cadastrado.', 'error'); GF.marcarErro($('#pdv-busca-codigo')); return; }
     if (achados.length > 1) { GF.toast(`${achados.length} produtos encontrados: refine a busca ou escolha na lista.`, 'info'); }
@@ -154,6 +175,85 @@
     if (!silencioso) GF.toast('Venda limpa.', 'info');
   }
 
+  // ------------------------------------------------------------ Venda em espera
+  async function atualizarEspera() {
+    try { $('#pdv-espera-qtd').textContent = (await GF.get('/api/sales/espera', true)).esperas.length || ''; } catch (e) { /* mantém */ }
+  }
+
+  function guardarEspera() {
+    if (!cart.length) { GF.toast('Não há itens para colocar em espera.', 'info'); return; }
+    GF.openModal({
+      title: 'Colocar venda em espera',
+      html: `<div class="form-group"><label for="esp-rotulo">Identificação (opcional)</label><input type="text" id="esp-rotulo" maxlength="60" placeholder="Ex.: cliente de boné"></div>
+        <p class="muted">O estoque não fica reservado: ele é conferido de novo ao finalizar.</p>
+        <div class="modal-actions"><button class="btn btn-secondary" data-cancel>Voltar</button><button class="btn btn-primary" data-ok>Colocar em espera</button></div>`,
+      onMount: m => {
+        const enviar = async () => {
+          try {
+            const r = await GF.post('/api/sales/espera', {
+              rotulo: m.$('#esp-rotulo').value, itens: cart.map(i => ({ id_produto: i.id_produto, quantidade: i.qtd })),
+              desconto: Number($('#pdv-desconto').value) || 0, desconto_tipo: $('#pdv-desconto-tipo').value
+            });
+            GF.toast(r.message, 'success'); m.close(); limparVenda(true); atualizarEspera();
+            $('#pdv-busca-codigo').focus();
+          } catch (e) { /* toast; o carrinho continua como está */ }
+        };
+        m.$('[data-cancel]').addEventListener('click', m.close);
+        m.$('[data-ok]').addEventListener('click', enviar);
+        m.$('#esp-rotulo').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); enviar(); } });
+      }
+    });
+  }
+
+  async function verEsperas() {
+    let lista;
+    try { lista = (await GF.get('/api/sales/espera')).esperas; } catch (e) { return; }
+    if (!lista.length) { GF.toast('Nenhuma venda em espera.', 'info'); return; }
+    GF.openModal({
+      title: 'Vendas em espera', wide: true,
+      html: `<div class="table-responsive"><table class="figma-styled-table"><thead><tr><th>Identificação</th><th>Desde</th><th>Itens</th><th>Total</th><th>Ações</th></tr></thead><tbody>
+        ${lista.map(e => `<tr data-id="${e.id_espera}"><td>${esc(e.rotulo || '-')}<br><small class="muted">${esc(e.usuario_nome)}</small></td><td>${GF.date(e.criada_em)}</td>
+          <td class="cell-itens">${esc(e.itens.map(i => `${i.nome_produto} x${GF.qty(i.quantidade)}`).join(', '))}${e.removidos.length ? `<br><small class="muted">Fora de linha: ${esc(e.removidos.join(', '))}</small>` : ''}</td>
+          <td>${GF.money(e.total)}</td>
+          <td class="col-acoes"><button class="btn btn-sm btn-primary" data-act="retomar">Retomar</button> <button class="btn-icon btn-action-cancel" data-act="descartar" title="Descartar" aria-label="Descartar venda em espera">${GF.icon('trash')}</button></td></tr>`).join('')}
+        </tbody></table></div>`,
+      onMount: m => m.el.addEventListener('click', async e => {
+        const b = e.target.closest('[data-act]'); if (!b) return;
+        const id = Number(b.closest('tr').dataset.id);
+        if (b.dataset.act === 'descartar') {
+          if (!await GF.confirm('Descartar esta venda em espera?', { danger: true, okLabel: 'Descartar' })) return;
+          try { const r = await GF.del(`/api/sales/espera/${id}`); GF.toast(r.message, 'success'); m.close(); atualizarEspera(); verEsperas(); } catch (er) { /* toast */ }
+          return;
+        }
+        if (cart.length) { GF.toast('Finalize ou coloque em espera a venda atual antes de retomar outra.', 'error'); return; }
+        try { const { espera } = await GF.post(`/api/sales/espera/${id}/retomar`); m.close(); await retomar(espera); } catch (er) { /* toast */ }
+      })
+    });
+  }
+
+  async function retomar(e) {
+    await carregarProdutos(); // preço e estoque de agora
+    cart = e.itens.map(i => ({ id_produto: i.id_produto, nome: i.nome_produto, unidade: i.unidade, preco: i.preco_venda, qtd: i.quantidade }));
+    $('#pdv-desconto').value = e.desconto; $('#pdv-desconto-tipo').value = e.desconto_tipo;
+    selItem = null; renderCart(); atualizarEspera();
+    if (e.removidos.length) GF.toast(`Saíram de linha e ficaram de fora: ${e.removidos.join(', ')}.`, 'error');
+    const faltando = cart.filter(i => { const p = prod(i.id_produto); return !p || i.qtd > p.quantidade_estoque; });
+    if (faltando.length) GF.toast(`Estoque insuficiente agora: ${faltando.map(i => i.nome).join(', ')}.`, 'error');
+    $('#pdv-busca-codigo').focus();
+  }
+
+  // Indicador do caixa: só aparece fechado quando a venda depende dele.
+  async function atualizarCaixa() {
+    const b = $('#pdv-caixa-status');
+    try {
+      const { caixa } = await GF.get('/api/caixa/atual', true);
+      const exige = GF.state.settings.exigirCaixaAberto;
+      b.classList.toggle('is-hidden', !caixa && !exige);
+      b.textContent = caixa ? 'Caixa aberto' : 'Caixa fechado: abrir';
+      b.classList.toggle('badge-success', !!caixa); b.classList.toggle('badge-urgent', !caixa); b.classList.remove('badge-info');
+    } catch (e) { /* mantém */ }
+  }
+
   async function carregarProdutos() {
     try { produtos = (await GF.get('/api/products')).products.filter(p => p.tipo !== 'Insumo'); popularProdutos(); } catch (e) { /* toast */ }
   }
@@ -162,9 +262,10 @@
     load: async () => {
       $('#pdv-atendente').textContent = GF.state.user.nome;
       try { GF.state.settings = (await GF.get('/api/settings', true)).settings; } catch (e) { /* mantém */ }
-      await carregarProdutos(); renderCart();
+      await carregarProdutos(); renderCart(); atualizarEspera(); atualizarCaixa();
       setTimeout(() => $('#pdv-busca-codigo').focus(), 50);
-    }
+    },
+    atualizarCaixa
   };
 
   // ------------------------------------------------------------ Histórico
@@ -284,11 +385,16 @@
     });
     $('#pdv-btn-limpar-carrinho').addEventListener('click', async () => { if (!cart.length || await GF.confirm('Descartar todos os itens da venda atual?', { danger: true, okLabel: 'Limpar venda' })) limparVenda(); });
     $('#pdv-btn-finalizar-venda').addEventListener('click', finalizar);
+    $('#pdv-btn-espera').addEventListener('click', guardarEspera);
+    $('#pdv-btn-retomar').addEventListener('click', verEsperas);
+    $('#pdv-caixa-status').addEventListener('click', () => GF.navigate('caixa'));
     // Atalhos do caixa: F2 busca produto, F4 finaliza (só com o caixa aberto e nenhum modal na frente).
     document.addEventListener('keydown', e => {
       if (GF.state.currentView !== 'vendas' || GF.$('.modal-backdrop:not(.is-hidden)')) return;
       if (e.key === 'F2') { e.preventDefault(); $('#pdv-busca-codigo').focus(); $('#pdv-busca-codigo').select(); }
       else if (e.key === 'F4') { e.preventDefault(); if (!$('#pdv-btn-finalizar-venda').disabled) finalizar(); }
+      else if (e.key === 'F6') { e.preventDefault(); guardarEspera(); }
+      else if (e.key === 'F7') { e.preventDefault(); verEsperas(); }
     });
     ['#pdv-desconto', '#pdv-desconto-tipo', '#pdv-recebido'].forEach(s => $(s).addEventListener('input', () => renderCart()));
     $('#pdv-forma-pagamento').addEventListener('change', () => atualizarTroco());

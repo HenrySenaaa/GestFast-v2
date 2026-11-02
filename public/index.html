@@ -178,6 +178,7 @@
         <a href="#fichas" class="nav-item" data-view="fichas" data-perm="producao:ver" title="Ficha Técnica"><svg class="nav-ico" aria-hidden="true"><use href="#i-book"/></svg><span class="nav-text">Ficha Técnica</span></a>
         <a href="#producao" class="nav-item" data-view="producao" data-perm="producao:ver" title="Produção"><svg class="nav-ico" aria-hidden="true"><use href="#i-flame"/></svg><span class="nav-text">Produção</span></a>
         <div class="nav-group-label">Vendas</div>
+        <a href="#caixa" class="nav-item" data-view="caixa" title="Caixa"><svg class="nav-ico" aria-hidden="true"><use href="#i-coins"/></svg><span class="nav-text">Caixa</span></a>
         <a href="#vendas" class="nav-item" data-view="vendas" data-perm="vendas:vender" title="Venda"><svg class="nav-ico" aria-hidden="true"><use href="#i-cart"/></svg><span class="nav-text">Venda</span></a>
         <a href="#historico" class="nav-item" data-view="historico" data-perm="vendas:ver" title="Histórico de Vendas"><svg class="nav-ico" aria-hidden="true"><use href="#i-receipt"/></svg><span class="nav-text">Histórico de Vendas</span></a>
         <a href="#relatorios" class="nav-item" data-view="relatorios" data-perm="relatorios:ver" title="Relatórios"><svg class="nav-ico" aria-hidden="true"><use href="#i-chart"/></svg><span class="nav-text">Relatórios</span></a>
@@ -395,6 +396,7 @@
                   <div class="figma-input-group"><label for="prod-estoque-minimo">Estoque Min *</label><input type="number" id="prod-estoque-minimo" class="figma-input" min="0" step="1" placeholder="15"></div>
                 </div>
                 <div class="form-col-figma">
+                  <div class="figma-input-group"><label for="prod-codigo-balanca">Código na balança</label><input type="number" id="prod-codigo-balanca" class="figma-input" min="1" step="1" placeholder="Só KG ou litro"></div>
                   <div class="figma-input-group"><label for="prod-peso">Peso</label><input type="text" id="prod-peso" class="figma-input" placeholder="50g" maxlength="30"></div>
                   <div class="figma-input-group">
                     <label for="prod-unidade">Unidade</label>
@@ -587,11 +589,49 @@
         </div>
       </section>
 
+      <!-- 6b. CAIXA: abertura, sangria, reforço e fechamento -->
+      <section id="view-caixa" class="app-view">
+        <div class="figma-tab-header">
+          <div>
+            <div class="figma-tab-title-pill">Caixa</div>
+            <p class="page-sub"><span id="caixa-estado" class="badge-status-pill badge-info">-</span></p>
+          </div>
+          <div class="quick-shortcuts">
+            <button class="btn btn-primary" id="caixa-btn-abrir"><svg class="icon" aria-hidden="true"><use href="#i-coins"/></svg> Abrir caixa</button>
+            <button class="btn btn-secondary" id="caixa-btn-sangria"><svg class="icon" aria-hidden="true"><use href="#i-out"/></svg> Sangria</button>
+            <button class="btn btn-secondary" id="caixa-btn-reforco"><svg class="icon" aria-hidden="true"><use href="#i-in"/></svg> Reforço</button>
+            <button class="btn btn-primary" id="caixa-btn-fechar"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg> Fechar caixa</button>
+          </div>
+        </div>
+        <div class="kpi-grid" id="caixa-kpis"></div>
+        <div class="figma-card full-panel" id="caixa-movimentos">
+          <h3>Sangrias e reforços deste caixa</h3>
+          <div class="table-responsive" id="caixa-mov-tabela"></div>
+        </div>
+        <div class="figma-card full-panel" data-perm="caixa:conferir">
+          <h3>Histórico de caixas</h3>
+          <div class="filter-toolbar">
+            <label class="inline-field">De <input type="date" id="caixa-de" class="select-field"></label>
+            <label class="inline-field">Até <input type="date" id="caixa-ate" class="select-field"></label>
+          </div>
+          <div class="table-responsive">
+            <table class="figma-styled-table">
+              <thead><tr><th>Abertura</th><th>Fechamento</th><th>Esperado</th><th>Contado</th><th>Diferença</th><th>Ações</th></tr></thead>
+              <tbody id="caixa-hist-corpo"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="caixa-pager"></div>
+        </div>
+      </section>
+
       <!-- 7. VENDA / CAIXA PDV -->
       <section id="view-vendas" class="app-view">
         <div class="figma-tab-header">
           <div class="figma-tab-title-pill">Venda</div>
-          <span class="badge-status-pill badge-info">Atendente: <strong id="pdv-atendente">-</strong></span>
+          <div class="quick-shortcuts">
+            <button type="button" id="pdv-caixa-status" class="badge-status-pill badge-info is-hidden" title="Ir para a tela do caixa">-</button>
+            <span class="badge-status-pill badge-info">Atendente: <strong id="pdv-atendente">-</strong></span>
+          </div>
         </div>
 
         <div class="figma-venda-layout">
@@ -600,11 +640,13 @@
               <button class="venda-dark-btn active" id="pdv-btn-abrir-adicionar" type="button" title="Buscar produto (F2)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"/></svg> Item</button>
               <button class="venda-dark-btn" id="pdv-btn-remover-item-modo" type="button" title="Remove o item selecionado na lista (ou o último adicionado)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-minus"/></svg> Remover</button>
               <button class="venda-dark-btn" id="pdv-btn-abrir-desconto" type="button" title="Aplicar desconto"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-percent"/></svg> Desconto</button>
+              <button class="venda-dark-btn" id="pdv-btn-espera" type="button" title="Guarda esta venda para atender o próximo cliente (F6)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-clock"/></svg> Espera</button>
+              <button class="venda-dark-btn" id="pdv-btn-retomar" type="button" title="Ver as vendas em espera (F7)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-undo"/></svg> Retomar <span id="pdv-espera-qtd"></span></button>
             </div>
 
             <div class="venda-product-picker-box">
               <label for="pdv-busca-codigo" class="venda-picker-label">Código de barras / nome:</label>
-              <input type="text" id="pdv-busca-codigo" class="figma-input-dark" placeholder="Leia o código ou digite e tecle Enter" autocomplete="off">
+              <input type="text" id="pdv-busca-codigo" class="figma-input-dark" placeholder="Leia o código ou a etiqueta da balança e tecle Enter" autocomplete="off">
 
               <label for="pdv-produto-select" class="venda-picker-label">Produto:</label>
               <select id="pdv-produto-select" class="figma-select-dark" aria-label="Selecione o produto para a venda"><option value="">Selecione...</option></select>
@@ -662,7 +704,7 @@
 
               <button class="btn-figma-add" id="pdv-btn-adicionar-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> Inserir no pedido</button>
               <button class="btn-figma-clear" id="pdv-btn-limpar-carrinho" type="button">Limpar venda</button>
-              <div class="pdv-atalhos" aria-label="Atalhos do caixa"><span><kbd>F2</kbd> buscar</span><span><kbd>Enter</kbd> inserir</span><span><kbd>F4</kbd> finalizar</span></div>
+              <div class="pdv-atalhos" aria-label="Atalhos do caixa"><span><kbd>F2</kbd> buscar</span><span><kbd>Enter</kbd> inserir</span><span><kbd>F4</kbd> finalizar</span><span><kbd>F6</kbd> espera</span><span><kbd>F7</kbd> retomar</span></div>
             </div>
           </div>
 
@@ -786,6 +828,11 @@
               <div class="form-group flex-1"><label for="cfg-validade">Aviso de validade (dias de antecedência)</label><input type="number" id="cfg-validade" min="0" max="60" step="1"></div>
               <div class="form-group flex-1"></div>
             </div>
+            <label class="checkbox-label"><input type="checkbox" id="cfg-exigir-caixa"> Exigir caixa aberto para vender</label>
+            <div class="form-row">
+              <div class="form-group flex-1"><label for="cfg-balanca-modo">A etiqueta da balança traz</label><select id="cfg-balanca-modo"><option value="peso">Peso (gramas)</option><option value="preco">Preço (centavos)</option></select></div>
+              <div class="form-group flex-1"><label for="cfg-balanca-digitos">Dígitos do código do produto na etiqueta</label><select id="cfg-balanca-digitos"><option value="4">4</option><option value="5">5</option><option value="6">6</option></select></div>
+            </div>
             <fieldset class="cfg-sim">
               <legend>Simulação de falhas externas (para testes e demonstração)</legend>
               <label class="checkbox-label"><input type="checkbox" id="cfg-sim-cartao"> Operadora de cartão nega as transações</label>
@@ -861,7 +908,9 @@
             <p>• No caixa, digite ou leia o código de barras e pressione Enter para localizar o produto.</p>
             <p>• Produtos vendidos por unidade, pacote, dúzia ou fatia só aceitam quantidades inteiras; apenas KG e litro aceitam frações.</p>
             <p>• No menu do usuário (canto superior direito) dá para aumentar o texto e ativar o alto contraste; o botão da lua alterna o tema claro/escuro.</p>
-            <p>• No caixa: <kbd>F2</kbd> busca produto, <kbd>F4</kbd> finaliza a venda e <kbd>Ctrl K</kbd> abre a busca geral.</p>
+            <p>• No caixa: <kbd>F2</kbd> busca produto, <kbd>F4</kbd> finaliza a venda, <kbd>F6</kbd> coloca em espera, <kbd>F7</kbd> retoma e <kbd>Ctrl K</kbd> abre a busca geral.</p>
+            <p>• Etiqueta da balança: leia o código no mesmo campo do código de barras e o item entra direto na venda. O produto precisa ter o "Código na balança" no cadastro.</p>
+            <p>• Tela Caixa: abra com o troco inicial antes de vender e, no fim do turno, conte a gaveta para fechar. O valor esperado só aparece para o funcionário depois do fechamento.</p>
           </div>
         </div>
       </section>
@@ -959,6 +1008,7 @@
   <script src="js/produtos.js"></script>
   <script src="js/movimentos.js"></script>
   <script src="js/vendas.js"></script>
+  <script src="js/caixa.js"></script>
   <script src="js/producao.js"></script>
   <script src="js/relatorios.js"></script>
   <script src="js/admin.js"></script>
