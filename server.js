@@ -309,7 +309,43 @@ route('POST', '/api/production/:id/cancel', { perm: 'producao:estornar' }, async
   return ok({ producao: p, message: 'Produção estornada: insumos devolvidos e produto retirado do estoque.' });
 });
 
+// ---------------- caixa (único da loja; contagem cega: quem só opera não recebe o esperado com o caixa aberto)
+route('GET', '/api/caixa/atual', {}, async ctx => ok({ caixa: await db.getCaixaAtual(can(ctx.user.perfil, 'caixa:conferir')) }));
+route('POST', '/api/caixa/abrir', { perm: 'caixa:operar' }, async ctx => {
+  const cx = await db.abrirCaixa(ctx.body, ctx.user);
+  logger.log('INFO', 'caixa_aberto', { id: cx.id_caixa, troco: cx.troco_inicial }, ctx.user.email);
+  return ok({ caixa: cx, message: 'Caixa aberto.' }, 201);
+});
+route('POST', '/api/caixa/movimento', { perm: 'caixa:operar' }, async ctx => {
+  const m = await db.movimentarCaixa(ctx.body, ctx.user);
+  logger.log('INFO', `caixa_${m.tipo}`, { valor: m.valor }, ctx.user.email);
+  return ok({ message: m.tipo === 'sangria' ? 'Sangria registrada.' : 'Reforço registrado.' }, 201);
+});
+route('POST', '/api/caixa/fechar', { perm: 'caixa:operar' }, async ctx => {
+  const cx = await db.fecharCaixa(ctx.body, ctx.user);
+  logger.log(cx.diferenca ? 'WARN' : 'INFO', 'caixa_fechado', { id: cx.id_caixa, esperado: cx.esperado, contado: cx.valor_contado, diferenca: cx.diferenca }, ctx.user.email);
+  return ok({ caixa: cx, message: 'Caixa fechado.' });
+});
+route('POST', '/api/caixa/:id/observacao', { perm: 'caixa:operar' }, async ctx => ok({ ...(await db.justificarCaixa(ctx.params.id, ctx.body)), message: 'Observação registrada.' }));
+route('GET', '/api/caixa', { perm: 'caixa:conferir' }, async ctx => {
+  const f = { from: ctx.query.from, to: ctx.query.to };
+  return comTotal(ctx, 'caixas', await db.listCaixas({ ...f, ...pagina(ctx) }), () => db.contarCaixas(f));
+});
+route('GET', '/api/caixa/:id', { perm: 'caixa:conferir' }, async ctx => {
+  const cx = await db.getCaixa(ctx.params.id);
+  if (!cx) throw new HttpError(404, 'Caixa não encontrado');
+  return ok({ caixa: cx });
+});
+
 // ---------------- vendas
+route('GET', '/api/sales/etiqueta/:codigo', { perm: 'vendas:vender' }, async ctx => ok({ etiqueta: await db.lerEtiquetaBalanca(ctx.params.codigo) }));
+route('GET', '/api/sales/espera', { perm: 'vendas:vender' }, async () => ok({ esperas: await db.listEspera() }));
+route('POST', '/api/sales/espera', { perm: 'vendas:vender' }, async ctx => ok({ ...(await db.guardarEspera(ctx.body, ctx.user)), message: 'Venda colocada em espera.' }, 201));
+route('POST', '/api/sales/espera/:id/retomar', { perm: 'vendas:vender' }, async ctx => ok({ espera: await db.retomarEspera(ctx.params.id) }));
+route('DELETE', '/api/sales/espera/:id', { perm: 'vendas:vender' }, async ctx => {
+  await db.descartarEspera(ctx.params.id);
+  return ok({ message: 'Venda em espera descartada.' });
+});
 route('GET', '/api/sales', { perm: 'vendas:ver' }, async ctx => {
   const f = { from: ctx.query.from, to: ctx.query.to, q: ctx.query.q, status: ctx.query.status };
   return comTotal(ctx, 'sales', await db.getVendas({ ...f, ...pagina(ctx) }), () => db.contarVendas(f));

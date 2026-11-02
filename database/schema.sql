@@ -56,6 +56,9 @@ CREATE TABLE configuracao (
   simular_cartao_negado           BOOLEAN NOT NULL DEFAULT FALSE,
   simular_fornecedor_indisponivel BOOLEAN NOT NULL DEFAULT FALSE,
   dias_alerta_validade            INT NOT NULL DEFAULT 3,  -- avisa quando faltam N dias (ou menos) para vencer
+  exigir_caixa_aberto             BOOLEAN NOT NULL DEFAULT TRUE,
+  balanca_modo                    ENUM('peso','preco') NOT NULL DEFAULT 'peso',
+  balanca_digitos_codigo          TINYINT NOT NULL DEFAULT 5,
   CHECK (id = 1)
 ) ENGINE=InnoDB;
 
@@ -77,6 +80,7 @@ CREATE TABLE fornecedor (
 CREATE TABLE produto (
   id_produto         INT PRIMARY KEY AUTO_INCREMENT,
   codigo_barras      VARCHAR(100) NOT NULL UNIQUE,
+  codigo_balanca     INT NULL,                          -- código do produto na etiqueta da balança
   nome_produto       VARCHAR(200) NOT NULL,
   descricao          TEXT,
   unidade            VARCHAR(20) NOT NULL DEFAULT 'UN', -- KG e Lt aceitam fração; as demais só inteiros
@@ -99,6 +103,7 @@ CREATE TABLE produto (
   CHECK (preco_venda > 0),
   CHECK (preco_min <= preco_venda AND preco_venda <= preco_max),
   CHECK (quantidade_estoque >= 0),
+  UNIQUE KEY uq_produto_balanca (codigo_balanca),
   CHECK (fator_conversao > 0)
 ) ENGINE=InnoDB;
 
@@ -172,6 +177,31 @@ CREATE TABLE item_pedido_modelo (
 -- ---------------------------------------------------------------------
 -- Vendas (PDV / balcão)
 -- ---------------------------------------------------------------------
+-- ---------------------------------------------------------------------
+-- Caixa: abertura, sangria, reforço e fechamento (a tabela venda aponta para cá)
+-- ---------------------------------------------------------------------
+-- Caixa único da loja: "aberto" só vale 1 enquanto está aberto, e o UNIQUE impede um segundo caixa aberto.
+CREATE TABLE caixa (
+  id_caixa         INT PRIMARY KEY AUTO_INCREMENT,
+  status           ENUM('Aberto','Fechado') NOT NULL DEFAULT 'Aberto',
+  aberto           TINYINT GENERATED ALWAYS AS (IF(status = 'Aberto', 1, NULL)) STORED,
+  data_abertura    DATETIME NOT NULL,
+  id_usuario_abertura INT NOT NULL,
+  troco_inicial    DECIMAL(12,2) NOT NULL,
+  data_fechamento  DATETIME,
+  id_usuario_fechamento INT,
+  valor_esperado   DECIMAL(12,2),                   -- congelado no fechamento
+  valor_contado    DECIMAL(12,2),
+  diferenca        DECIMAL(12,2),                   -- contado - esperado
+  observacao       TEXT,
+  resumo           JSON,                            -- totais por forma congelados no fechamento
+  UNIQUE KEY uq_caixa_aberto (aberto),
+  INDEX idx_caixa_abertura (data_abertura),
+  FOREIGN KEY (id_usuario_abertura) REFERENCES usuario(id_usuario),
+  FOREIGN KEY (id_usuario_fechamento) REFERENCES usuario(id_usuario),
+  CHECK (troco_inicial >= 0)
+) ENGINE=InnoDB;
+
 CREATE TABLE venda (
   id_venda            INT PRIMARY KEY AUTO_INCREMENT,
   codigo_venda        VARCHAR(20) NOT NULL UNIQUE,
@@ -193,6 +223,9 @@ CREATE TABLE venda (
   editada_por         INT,
   data_edicao         DATETIME,
   id_usuario          INT NOT NULL,
+  id_caixa            INT NULL,                        -- NULL: venda sem controle de caixa
+  INDEX idx_venda_caixa (id_caixa),
+  CONSTRAINT fk_venda_caixa FOREIGN KEY (id_caixa) REFERENCES caixa(id_caixa),
   FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario),
   FOREIGN KEY (cancelada_por) REFERENCES usuario(id_usuario),
   FOREIGN KEY (autorizada_por) REFERENCES usuario(id_usuario),
@@ -219,6 +252,33 @@ CREATE TABLE venda_pagamento (
   nsu                VARCHAR(20),
   FOREIGN KEY (id_venda) REFERENCES venda(id_venda) ON DELETE CASCADE,
   CHECK (valor > 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE caixa_movimento (
+  id_movimento INT PRIMARY KEY AUTO_INCREMENT,
+  id_caixa     INT NOT NULL,
+  tipo         ENUM('sangria','reforco','estorno') NOT NULL,
+  valor        DECIMAL(12,2) NOT NULL,
+  motivo       VARCHAR(255) NOT NULL,
+  data_movimento DATETIME NOT NULL,
+  id_usuario   INT NOT NULL,
+  id_venda     INT NULL,                            -- só no estorno de venda de um caixa já fechado
+  FOREIGN KEY (id_caixa) REFERENCES caixa(id_caixa),
+  FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario),
+  FOREIGN KEY (id_venda) REFERENCES venda(id_venda) ON DELETE SET NULL,
+  CHECK (valor > 0)
+) ENGINE=InnoDB;
+
+-- Venda em espera: segura o carrinho para atender o próximo cliente. Não reserva estoque.
+CREATE TABLE venda_espera (
+  id_espera     INT PRIMARY KEY AUTO_INCREMENT,
+  rotulo        VARCHAR(60),
+  itens         JSON NOT NULL,
+  desconto      DECIMAL(12,2) NOT NULL DEFAULT 0,
+  desconto_tipo ENUM('valor','percentual') NOT NULL DEFAULT 'valor',
+  criada_em     DATETIME NOT NULL,
+  id_usuario    INT NOT NULL,
+  FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario)
 ) ENGINE=InnoDB;
 
 -- ---------------------------------------------------------------------

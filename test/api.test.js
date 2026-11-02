@@ -15,11 +15,13 @@ const assert = require('node:assert/strict');
 const { recriarBancoDeTeste } = require('./setup-db');
 const server = require('../server');
 const db = require('../db');
+const { digitoVerificador } = require('../lib/balanca');
 const saldo = async id => (await db.getProductById(id)).quantidade_estoque;
 
 let base;
 test.before(async () => {
   await recriarBancoDeTeste(process.env.DB_NAME);
+  await db.pool.query('UPDATE configuracao SET exigir_caixa_aberto = FALSE'); // os testes de caixa ligam quando precisam
   await new Promise(r => server.listen(0, r));
   base = `http://localhost:${server.address().port}`;
 });
@@ -689,4 +691,189 @@ test('Pagamento misto: partes somam o total, troco só da parte em dinheiro, rel
   assert.equal((await a.del(`/api/sales/${v.id_venda}`, { autorizador_email: 'proprietario@padarianovayork.com', autorizador_senha: 'admin123' })).status, 200);
   const [[{ n }]] = await db.pool.query('SELECT COUNT(*) AS n FROM venda_pagamento WHERE id_venda = ?', [v.id_venda]);
   assert.equal(Number(n), 0);
+});
+
+// Fase B: etiqueta da balança com dígito verificador certo (2 + código + valor + DV).
+const etiqueta = (codigo, valor, digitos = 5) => {
+  const doze = `2${String(codigo).padStart(digitos, '0')}${String(valor).padStart(11 - digitos, '0')}`;
+  return doze + digitoVerificador(doze);
+};
+const exigirCaixa = v => db.pool.query('UPDATE configuracao SET exigir_caixa_aberto = ?', [v]);
+const AUT = { autorizador_email: 'proprietario@padarianovayork.com', autorizador_senha: 'admin123' };
+
+test('Caixa: abertura, esperado, contagem cega e fechamento', async () => {
+  await exigirCaixa(true);
+  await db.pool.query('UPDATE produto SET quantidade_estoque = 100 WHERE id_produto = 2');
+  const a = await admin(), f = await funcEtapa3(), b = await back();
+  const venda = (forma, q = 2, extra = {}) => f.post('/api/sales', { itens: [{ id_produto: 2, quantidade: q }], forma_pagamento: forma, ...extra });
+
+  const semCaixa = await venda('Dinheiro');
+  assert.equal(semCaixa.status, 409); assert.match(semCaixa.error, /caixa está fechado/);
+  assert.equal((await b.post('/api/caixa/abrir', { troco_inicial: 10 })).status, 403);
+  assert.equal((await f.post('/api/caixa/abrir', {})).status, 400);
+  assert.equal((await f.post('/api/caixa/abrir', { troco_inicial: -1 })).status, 400);
+
+  // duas aberturas ao mesmo tempo: só uma passa
+  const duas = await Promise.all([f.post('/api/caixa/abrir', { troco_inicial: 100 }), a.post('/api/caixa/abrir', { troco_inicial: 100 })]);
+  assert.deepEqual(duas.map(r => r.status).sort(), [201, 409]);
+
+  const din = (await venda('Dinheiro', 2, { valor_recebido: 50 })).sale; // 37,80; o troco não muda o esperado
+  assert.ok(din.id_caixa); assert.equal(din.troco, 12.2);
+  const pix = (await venda('PIX', 1)).sale;
+  const misto = (await venda('Misto', 2, { pagamentos: [{ forma_pagamento: 'PIX', valor: 20 }, { forma_pagamento: 'Dinheiro', valor: 17.8 }] })).sale;
+
+  assert.equal((await f.post('/api/caixa/movimento', { tipo: 'sangria', valor: 0, motivo: 'Depósito' })).status, 400);
+  assert.equal((await f.post('/api/caixa/movimento', { tipo: 'sangria', valor: 30 })).status, 400);
+  assert.equal((await f.post('/api/caixa/movimento', { tipo: 'outro', valor: 30, motivo: 'Depósito' })).status, 400);
+  assert.equal((await f.post('/api/caixa/movimento', { tipo: 'sangria', valor: 30, motivo: 'Depósito no banco' })).status, 201);
+  assert.equal((await f.post('/api/caixa/movimento', { tipo: 'reforco', valor: 50, motivo: 'Mais troco' })).status, 201);
+  const esperado = async () => (await a.get('/api/caixa/atual')).caixa.esperado;
+  assert.equal(await esperado(), 175.6); // 100 + 37,80 + 17,80 + 50 - 30
+
+  const r = (await a.get('/api/caixa/atual')).caixa.resumo;
+  assert.equal(r.vendas, 3); assert.equal(r.porForma.PIX, 38.9); assert.equal(r.porForma.Dinheiro, 55.6);
+
+  // contagem cega: o Funcionário não recebe esperado nem totais com o caixa aberto
+  const cego = (await f.get('/api/caixa/atual')).caixa;
+  assert.equal(cego.troco_inicial, 100); assert.equal(cego.movimentos.length, 2);
+  assert.ok(!('esperado' in cego)); assert.ok(!('resumo' in cego));
+  assert.equal((await f.get('/api/caixa')).status, 403);
+  assert.equal((await f.get(`/api/caixa/${cego.id_caixa}`)).status, 403);
+
+  // cancelar e editar com o caixa aberto já mudam o esperado
+  assert.equal((await a.post(`/api/sales/${pix.id_venda}/cancel`, { motivo: 'Cliente desistiu da compra', ...AUT })).status, 200);
+  assert.equal(await esperado(), 175.6); // PIX não mexe na gaveta
+  assert.equal((await a.post(`/api/sales/${din.id_venda}/cancel`, { motivo: 'Cliente desistiu da compra', ...AUT })).status, 200);
+  assert.equal(await esperado(), 137.8);
+  assert.equal((await a.put(`/api/sales/${misto.id_venda}`, { itens: [{ id_produto: 2, quantidade: 1 }] })).status, 200);
+  assert.equal(await esperado(), 128.9); // a parte em dinheiro caiu para 8,90
+
+  // fechamento: a resposta traz esperado e diferença; a justificativa vem depois
+  assert.equal((await f.post('/api/caixa/fechar', {})).status, 400);
+  const fechou = await f.post('/api/caixa/fechar', { valor_contado: 120 });
+  assert.equal(fechou.status, 200, fechou.error);
+  assert.equal(fechou.caixa.esperado, 128.9); assert.equal(fechou.caixa.diferenca, -8.9); assert.equal(fechou.caixa.status, 'Fechado');
+  assert.equal((await f.post(`/api/caixa/${cego.id_caixa}/observacao`, { observacao: 'x' })).status, 400);
+  assert.equal((await f.post(`/api/caixa/${cego.id_caixa}/observacao`, { observacao: 'Troco errado no fim do turno' })).status, 200);
+  assert.equal((await f.post(`/api/caixa/${cego.id_caixa}/observacao`, { observacao: 'Outra justificativa' })).status, 400);
+
+  assert.equal((await f.post('/api/caixa/fechar', { valor_contado: 1 })).status, 409);
+  assert.equal((await f.post('/api/caixa/movimento', { tipo: 'sangria', valor: 1, motivo: 'Depósito' })).status, 409);
+  assert.equal((await venda('Dinheiro')).status, 409);
+  assert.equal((await f.get('/api/caixa/atual')).caixa, null);
+
+  // venda de caixa fechado: editar e excluir não; cancelar sim, com estorno no caixa de agora
+  assert.match((await a.put(`/api/sales/${misto.id_venda}`, { itens: [{ id_produto: 2, quantidade: 2 }] })).error, /caixa já fechado/);
+  assert.match((await a.del(`/api/sales/${misto.id_venda}`, AUT)).error, /caixa já fechado/);
+  const sem = await a.post(`/api/sales/${misto.id_venda}/cancel`, { motivo: 'Cliente desistiu da compra', ...AUT });
+  assert.equal(sem.status, 409); assert.match(sem.error, /Abra o caixa/);
+  assert.equal((await db.getVenda(misto.id_venda)).status_venda, 'Concluída'); // nada foi gravado
+
+  const novo = (await a.post('/api/caixa/abrir', { troco_inicial: 0 })).caixa;
+  assert.equal((await a.post(`/api/sales/${misto.id_venda}/cancel`, { motivo: 'Cliente desistiu da compra', ...AUT })).status, 200);
+  const atual = (await a.get('/api/caixa/atual')).caixa;
+  assert.deepEqual(atual.movimentos.map(m => [m.tipo, m.valor]), [['estorno', 8.9]]);
+  assert.equal(atual.esperado, -8.9);
+
+  // o fechamento antigo não muda
+  const antigo = (await b.get(`/api/caixa/${cego.id_caixa}`)).caixa;
+  assert.equal(antigo.esperado, 128.9); assert.equal(antigo.resumo.porForma.Dinheiro, 8.9);
+  assert.equal(antigo.observacao, 'Troco errado no fim do turno');
+  const hist = await b.get('/api/caixa?limit=50');
+  assert.equal(hist.total, 2); assert.equal(hist.caixas[0].id_caixa, novo.id_caixa);
+
+  assert.equal((await a.post('/api/caixa/fechar', { valor_contado: 0 })).caixa.diferenca, 8.9);
+
+  // com a exigência desligada a venda passa, sem caixa ligado
+  await exigirCaixa(false);
+  const solta = await venda('Dinheiro', 1);
+  assert.equal(solta.status, 201, solta.error); assert.equal(solta.sale.id_caixa, null);
+  assert.equal((await a.post(`/api/sales/${solta.sale.id_venda}/cancel`, { motivo: 'Cliente desistiu da compra', ...AUT })).status, 200);
+});
+
+test('Balança: código no cadastro e leitura da etiqueta por peso e por preço', async () => {
+  const a = await admin(), f = await funcEtapa3(), b = await back();
+  const base = { unidade: 'KG', preco_venda: 40, id_categoria: 3, estoque_minimo: 1, quantidade_estoque: 10 };
+  const p = (await a.post('/api/products', { ...base, nome_produto: 'Presunto Fatiado', codigo_balanca: 123 })).product;
+  assert.equal(p.codigo_balanca, 123);
+  assert.match((await a.post('/api/products', { ...base, nome_produto: 'Peito de Peru', codigo_balanca: 123 })).error, /já está em "Presunto Fatiado"/);
+  assert.match((await a.post('/api/products', { ...base, nome_produto: 'Sonho', unidade: 'UN', quantidade_estoque: 1, codigo_balanca: 124 })).error, /KG ou litro/);
+  assert.match((await a.post('/api/products', { ...base, nome_produto: 'Peito de Peru', codigo_balanca: 123456 })).error, /até 5 dígitos/);
+
+  const ler = (c, cod) => c.get(`/api/sales/etiqueta/${cod}`);
+  assert.equal((await ler(b, etiqueta(123, 250))).status, 403);
+
+  // peso (padrão): 250 g, e a venda sai pela quantidade da etiqueta
+  const et = await ler(f, etiqueta(123, 250));
+  assert.equal(et.status, 200, et.error);
+  assert.equal(et.etiqueta.id_produto, p.id_produto); assert.equal(et.etiqueta.quantidade, 0.25); assert.equal(et.etiqueta.modo, 'peso');
+  const v = await f.post('/api/sales', { itens: [{ id_produto: p.id_produto, quantidade: et.etiqueta.quantidade }], forma_pagamento: 'PIX' });
+  assert.equal(v.sale.valor_total, 10);
+  assert.equal(await saldo(p.id_produto), 9.75);
+
+  // erros de leitura
+  const certo = etiqueta(123, 250);
+  assert.match((await ler(f, certo.slice(0, 12) + ((Number(certo[12]) + 1) % 10))).error, /dígito verificador/);
+  assert.equal((await ler(f, etiqueta(999, 250))).status, 404);
+  assert.equal((await ler(f, '12345')).status, 404);
+  assert.match((await ler(f, etiqueta(123, 0))).error, /sem peso ou preço/);
+
+  // um produto com código de barras em formato de etiqueta continua sendo esse produto
+  const colisao = etiqueta(123, 777);
+  await a.post('/api/products', { ...base, nome_produto: 'Produto Importado', codigo_barras: colisao });
+  assert.match((await ler(f, colisao)).error, /código de barras de "Produto Importado"/);
+
+  // preço: R$ 12,00 a R$ 40/kg = 300 g
+  assert.equal((await a.put('/api/settings', { balancaModo: 'preco' })).settings.balancaModo, 'preco');
+  assert.equal((await ler(f, etiqueta(123, 1200))).etiqueta.quantidade, 0.3);
+
+  // outro formato de balança: código com 4 dígitos
+  assert.equal((await a.put('/api/settings', { balancaModo: 'peso', balancaDigitosCodigo: 4 })).settings.balancaDigitosCodigo, 4);
+  assert.equal((await ler(f, etiqueta(123, 500, 4))).etiqueta.quantidade, 0.5);
+  assert.equal((await a.put('/api/settings', { balancaDigitosCodigo: 7 })).status, 400);
+  await a.put('/api/settings', { balancaDigitosCodigo: 5 });
+
+  // produto inativo não passa
+  await db.pool.query("UPDATE produto SET status = 'Inativo' WHERE id_produto = ?", [p.id_produto]);
+  assert.match((await ler(f, etiqueta(123, 250))).error, /inativo/);
+});
+
+test('Venda em espera: guardar, retomar, descartar, sem reservar estoque', async () => {
+  const a = await admin(), f = await funcEtapa3(), b = await back();
+  await db.pool.query('UPDATE produto SET quantidade_estoque = 10 WHERE id_produto IN (2, 5)');
+  assert.equal((await b.get('/api/sales/espera')).status, 403);
+  assert.equal((await f.post('/api/sales/espera', { itens: [] })).status, 400);
+  assert.equal((await f.post('/api/sales/espera', { itens: [{ id_produto: 2, quantidade: 1.5 }] })).status, 400); // pacote é inteiro
+
+  const g = await f.post('/api/sales/espera', { rotulo: 'Cliente de boné', itens: [{ id_produto: 2, quantidade: 5 }, { id_produto: 5, quantidade: 1 }], desconto: 10, desconto_tipo: 'percentual' });
+  assert.equal(g.status, 201, g.error);
+  assert.equal(await saldo(2), 10); // não reserva
+
+  // outro operador enxerga, com o preço de agora
+  await db.pool.query('UPDATE produto SET preco_venda = 19 WHERE id_produto = 2');
+  const lista = (await a.get('/api/sales/espera')).esperas;
+  assert.equal(lista.length, 1);
+  assert.equal(lista[0].rotulo, 'Cliente de boné'); assert.equal(lista[0].total, 100.5); assert.equal(lista[0].itens.length, 2);
+
+  // o estoque acaba enquanto espera, e o item saiu de linha: retoma, avisa e a venda é checada de novo
+  await db.pool.query('UPDATE produto SET quantidade_estoque = 3 WHERE id_produto = 2');
+  await db.pool.query("UPDATE produto SET status = 'Inativo' WHERE id_produto = 5");
+  const r = (await a.post(`/api/sales/espera/${g.id_espera}/retomar`)).espera;
+  assert.deepEqual(r.itens.map(i => [i.id_produto, i.quantidade]), [[2, 5]]);
+  assert.deepEqual(r.removidos, ['Açúcar Cristal 1kg']);
+  assert.equal(r.desconto, 10); assert.equal(r.desconto_tipo, 'percentual');
+  assert.match((await a.post('/api/sales', { itens: r.itens, forma_pagamento: 'PIX' })).error, /indisponível/);
+  await db.pool.query("UPDATE produto SET status = 'Ativo', quantidade_estoque = 10 WHERE id_produto IN (2, 5)");
+  await db.pool.query('UPDATE produto SET preco_venda = 18.90 WHERE id_produto = 2');
+
+  // retomar apaga: não dá para vender duas vezes
+  assert.equal((await f.post(`/api/sales/espera/${g.id_espera}/retomar`)).status, 404);
+  assert.equal((await f.get('/api/sales/espera')).esperas.length, 0);
+
+  const d = await f.post('/api/sales/espera', { itens: [{ id_produto: 2, quantidade: 1 }] });
+  assert.equal((await f.del(`/api/sales/espera/${d.id_espera}`)).status, 200);
+  assert.equal((await f.del(`/api/sales/espera/${d.id_espera}`)).status, 404);
+
+  // a rota de espera não atrapalha a consulta de venda por id
+  assert.equal((await a.get('/api/sales/999999')).status, 404);
 });
