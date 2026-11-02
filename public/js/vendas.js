@@ -123,7 +123,8 @@
     campo.focus();
   }
 
-  function buscarCodigo() {
+  async function buscarCodigo() {
+    await garantirProdutos();
     const t = $('#pdv-busca-codigo').value.trim().toLowerCase();
     if (!t) return;
     let achados = produtos.filter(p => p.codigo_barras.toLowerCase() === t);
@@ -256,6 +257,11 @@
 
   async function carregarProdutos() {
     try { produtos = (await GF.get('/api/products')).products.filter(p => p.tipo !== 'Insumo'); popularProdutos(); } catch (e) { /* toast */ }
+  }
+
+  // Leitor disparado antes de a lista chegar: carrega agora em vez de dizer que o produto não existe.
+  async function garantirProdutos() {
+    if (!produtos.length) await carregarProdutos();
   }
 
   GF.views.vendas = {
