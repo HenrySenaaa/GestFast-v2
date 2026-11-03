@@ -747,7 +747,7 @@ class Database {
     const prev = txt(data.previsao_entrega) || dataISO(deslocar(4));
     if (!DATA_RE.test(prev) || prev < dataISO()) throw erro('A previsão de entrega deve ser uma data a partir de hoje.');
     const obs = validarTexto(data.observacao, 'A observação da requisição', { min: 10, max: 5000 });
-    return { prev, obs, endereco: txt(data.endereco_entrega) || 'Padrão - Padaria Nova York' };
+    return { prev, obs, endereco: txt(data.endereco_entrega) || 'Padrão - Padaria Pão Dourado' };
   }
 
   // Valida um item e grava a requisição "Em Aberto" na transação `c`. Devolve o id criado.

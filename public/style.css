@@ -837,3 +837,7 @@ html[data-theme="dark"] .btn-finalizar-checkout, html.hc .btn-finalizar-checkout
   .pm-linha .pm-valor, .pm-linha .pm-sub { display: none; }
   .forn-linha { grid-template-columns: 1fr; }
 }
+
+/* ---------------------------------------------------------------- DEMO: faixa de aviso */
+.demo-faixa { position: fixed; left: 0; right: 0; bottom: 0; z-index: 9999; padding: 4px 12px; font-size: 12px; background: rgba(17, 24, 39, .82); color: #fff; text-align: center; }
+body { padding-bottom: 26px; }
