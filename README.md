@@ -1,5 +1,9 @@
 # GestFast ERP v2
 
+> **Branch `demo-supabase`:** versão só para demonstração, com PostgreSQL (Supabase) e dados fictícios da Padaria Pão Dourado. Não vai para a `main`, que continua em MySQL.
+> Banco: no SQL Editor do Supabase, rodar `database/schema-pg.sql`, `seed-pg.sql` e `ajuste-demo-pg.sql`, com a Data API desligada. Servidor: variável `DATABASE_URL` com a conexão "Session pooler".
+> As senhas iniciais estão no `seed-pg.sql`, que é público: troque-as na primeira subida. Os arquivos `.sql` sem `-pg` e as migrações valem só para a versão MySQL.
+
 Sistema de gestão de estoque e vendas para panificadoras (projeto USCS - ADS). Back-end em Node.js (módulo `http`) com banco **MySQL 8**, e front-end em HTML/CSS/JS puro.
 
 ## Como executar

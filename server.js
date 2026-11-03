@@ -603,11 +603,11 @@ if (require.main === module) {
   })).then(() => {
     server.listen(PORT, () => {
       console.log(`[GestFast ERP] Servidor rodando em http://localhost:${PORT}`);
-      console.log(`[GestFast ERP] Banco MySQL: ${process.env.DB_NAME || 'gestfast'} em ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 3306}`);
+      console.log(`[GestFast ERP] Banco PostgreSQL, schema ${process.env.DB_NAME || 'gestfast'}`);
     });
   }).catch(err => {
-    console.error('[GestFast ERP] Não foi possível conectar ao MySQL:', err.code || err.message);
-    console.error('Confira se o MySQL está rodando e se o arquivo .env existe com a senha certa (modelo em .env.example).');
+    console.error('[GestFast ERP] Não foi possível conectar ao banco:', err.code || err.message);
+    console.error('Confira a variável DATABASE_URL (modelo em .env.example).');
     process.exit(1);
   });
 }

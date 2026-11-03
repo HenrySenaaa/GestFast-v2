@@ -11,11 +11,13 @@
     "type": "git",
     "url": "git+https://github.com/HenrySenaaa/GestFast-main.git"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
     "dotenv": "^18.0.7",
-    "mysql2": "^3.24.6"
+    "pg": "^8.23.1"
   }
 }

@@ -154,16 +154,16 @@ class Database {
   // O GestFast v2 precisa da migracao-otimizacao.sql (coluna numero_pedido e índices).
   async verificarEsquema() {
     const [rows] = await pool.query(
-      "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'requisicao' AND column_name = 'numero_pedido'");
+      "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'requisicao' AND column_name = 'numero_pedido'");
     if (!rows.length) throw erro('O banco ainda não tem as otimizações do GestFast v2. Rode database/migracao-otimizacao.sql no MySQL Workbench.', 500);
     const [fichas] = await pool.query(
-      "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'ficha_tecnica'");
+      "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'ficha_tecnica'");
     if (!fichas.length) throw erro('O banco ainda não tem as tabelas de produção (etapa 3). Rode database/migracao-etapa3.sql no MySQL Workbench.', 500);
     const [etapa4] = await pool.query(
-      "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'venda_pagamento'");
+      "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'venda_pagamento'");
     if (!etapa4.length) throw erro('O banco ainda não tem as tabelas da etapa 4 (pedido em massa e pagamento misto). Rode database/migracao-etapa4.sql no MySQL Workbench.', 500);
     const [etapa5] = await pool.query(
-      "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'caixa'");
+      "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'caixa'");
     if (!etapa5.length) throw erro('O banco ainda não tem as tabelas da etapa 5 (caixa, balança e venda em espera). Rode database/migracao-etapa5.sql no MySQL Workbench.', 500);
   }
 
@@ -605,16 +605,16 @@ class Database {
   async sincronizarAlertas(c = pool) {
     await c.query(
       `INSERT INTO alerta_estoque (data_alerta, mensagem, status_alerta, id_produto)
-       SELECT ?, CONCAT('Atenção: ', p.nome_produto, ' atingiu o estoque mínimo'), 'Ativo', p.id_produto
+       SELECT ?::timestamp, CONCAT('Atenção: ', p.nome_produto, ' atingiu o estoque mínimo'), 'Ativo', p.id_produto
        FROM produto p
        WHERE p.status = 'Ativo' AND p.quantidade_estoque <= p.estoque_minimo
-         AND NOT EXISTS (SELECT 1 FROM alerta_estoque a WHERE a.id_produto = p.id_produto AND a.status_alerta = 'Ativo')`,
+         AND NOT EXISTS (SELECT 1 FROM alerta_estoque a WHERE a.id_produto = p.id_produto AND a.status_alerta = 'Ativo')
+       ORDER BY p.id_produto`,
       [dataHora()]
     );
     await c.query(
-      `UPDATE alerta_estoque a JOIN produto p ON p.id_produto = a.id_produto
-       SET a.status_alerta = 'Resolvido'
-       WHERE a.status_alerta = 'Ativo' AND NOT (p.status = 'Ativo' AND p.quantidade_estoque <= p.estoque_minimo)`
+      `UPDATE alerta_estoque a SET status_alerta = 'Resolvido' FROM produto p
+       WHERE p.id_produto = a.id_produto AND a.status_alerta = 'Ativo' AND NOT (p.status = 'Ativo' AND p.quantidade_estoque <= p.estoque_minimo)`
     );
   }
 
@@ -635,7 +635,7 @@ class Database {
     const hoje = dataISO();
     const [rows] = await c.query(
       `SELECT p.id_produto, p.nome_produto, p.codigo_barras, p.unidade, p.lote, p.validade, p.quantidade_estoque, p.preco_custo,
-              c.nome_categoria AS categoria, DATEDIFF(p.validade, ?) AS dias_restantes
+              c.nome_categoria AS categoria, (p.validade - ?::date) AS dias_restantes
        FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria
        WHERE p.status = 'Ativo' AND p.validade IS NOT NULL AND p.quantidade_estoque > 0 AND p.validade <= ?
        ORDER BY p.validade, p.nome_produto`, [hoje, dataISO(deslocar(dias))]);
@@ -661,7 +661,7 @@ class Database {
       pool.query(
         `SELECT c.nome_categoria AS categoria, SUM(p.quantidade_estoque) AS total
          FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria
-         WHERE p.status = 'Ativo' GROUP BY c.id_categoria, c.nome_categoria HAVING total > 0 ORDER BY c.id_categoria`),
+         WHERE p.status = 'Ativo' GROUP BY c.id_categoria, c.nome_categoria HAVING SUM(p.quantidade_estoque) > 0 ORDER BY c.id_categoria`),
       this.getAlertasCriticos(),
       this.getValidades(),
       pool.query(
@@ -669,7 +669,7 @@ class Database {
          WHERE status_venda = 'Concluída' AND data_venda >= ? AND data_venda < ?`, [hoje, amanha]),
       pool.query('SELECT COUNT(*) AS n FROM requisicao WHERE situacao IN (?)', [SITUACOES_ABERTAS]),
       pool.query(
-        `SELECT DATE_FORMAT(data_venda, '%Y-%m-%d') AS dia, COUNT(*) AS vendas, SUM(valor_total) AS total FROM venda
+        `SELECT to_char(data_venda, 'YYYY-MM-DD') AS dia, COUNT(*) AS vendas, SUM(valor_total) AS total FROM venda
          WHERE status_venda = 'Concluída' AND data_venda >= ? AND data_venda < ? GROUP BY dia ORDER BY dia`, [semanaInicio, amanha]),
       this.listRequisicoes({ limite: 6 })
     ]);
@@ -764,7 +764,8 @@ class Database {
     if (!Number.isFinite(vu) || vu < 0) throw erro(`O preço unitário de "${nomeProd}" é inválido.`);
     // Código = maior número existente + 1 (não depende do id, que pode pular).
     // numero_pedido é calculado e indexado pelo banco: o MAX sai do índice e trava só o fim dele.
-    const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao FOR UPDATE');
+    await c.query('LOCK TABLE requisicao IN EXCLUSIVE MODE');
+    const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao');
     const [r] = await c.query(
       `INSERT INTO requisicao (codigo_pedido, pedido_grupo, id_fornecedor, id_produto, produto_nome, quantidade_pedida, quantidade_atendida, unidade,
          valor_unitario, valor_total, situacao, data_pedido, previsao_entrega, endereco_entrega, observacao)
@@ -801,7 +802,8 @@ class Database {
         vistos.add(idNum(it.id_produto));
       }
       const comum = this.dadosComunsPedido(data);
-      const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao FOR UPDATE');
+      await c.query('LOCK TABLE requisicao IN EXCLUSIVE MODE');
+      const [[mx]] = await c.query('SELECT COALESCE(MAX(numero_pedido), 9660) AS n FROM requisicao');
       const grupo = `PED-${Number(mx.n) + 1}`;
       const ids = [];
       for (const it of itens) ids.push(await this.inserirRequisicao(c, it, idForn, comum, ator, grupo));
@@ -1022,10 +1024,7 @@ class Database {
   // Total de registros e valor somado de TODO o filtro (não só da página), para o resumo da tela.
   async contarMovimentacoes(filtros = {}) {
     const f = this.filtroMovimentacoes(filtros);
-    // Sem período, somar o histórico inteiro lendo a tabela em sequência é ~3x mais rápido que pelo índice
-    // de tipo (que buscaria linha a linha). Com período, o índice vence. Medido no teste de carga.
-    const dica = filtros.from || filtros.to ? '' : ' IGNORE INDEX (idx_mov_tipo_data)';
-    const [[r]] = await pool.query(`SELECT COUNT(*) AS n, COALESCE(SUM(m.quantidade * m.valor_unitario), 0) AS valor FROM movimentacao_estoque m${dica}${f.sql}`, f.params);
+    const [[r]] = await pool.query(`SELECT COUNT(*) AS n, COALESCE(SUM(m.quantidade * m.valor_unitario), 0) AS valor FROM movimentacao_estoque m${f.sql}`, f.params);
     return { total: Number(r.n), valorTotal: r2(r.valor) };
   }
 
@@ -1067,7 +1066,7 @@ class Database {
   }
 
   async getVenda(id, c = pool, lock = false) {
-    const [rows] = await c.query(`${SQL_VENDA} WHERE v.id_venda = ?${lock ? ' FOR UPDATE' : ''}`, [idNum(id)]);
+    const [rows] = await c.query(`${SQL_VENDA} WHERE v.id_venda = ?${lock ? ' FOR UPDATE OF v' : ''}`, [idNum(id)]);
     if (!rows[0]) return undefined;
     const [itens, partes] = await Promise.all([this.itensDasVendas([rows[0].id_venda], c), this.pagamentosDasVendas(rows, c)]);
     return mapVenda(rows[0], itens.get(rows[0].id_venda), partes.get(rows[0].id_venda));
@@ -1103,7 +1102,7 @@ class Database {
   async contarVendas(filtros = {}) {
     const f = this.filtroVendas(filtros);
     const [[r]] = await pool.query(
-      `SELECT COUNT(*) AS n, COALESCE(SUM(IF(v.status_venda = 'Concluída', v.valor_total, 0)), 0) AS fat FROM venda v${f.sql}`, f.params);
+      `SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN v.status_venda = 'Concluída' THEN v.valor_total ELSE 0 END), 0) AS fat FROM venda v${f.sql}`, f.params);
     return { total: Number(r.n), faturamento: r2(r.fat) };
   }
 
@@ -1481,7 +1480,7 @@ class Database {
       try {
         [r] = await c.query('INSERT INTO caixa (data_abertura, id_usuario_abertura, troco_inicial) VALUES (?, ?, ?)', [dataHora(), ator.id_usuario, r2(troco)]);
       } catch (e) {
-        if (e.code === 'ER_DUP_ENTRY') throw erro('Já existe um caixa aberto.', 409);
+        if (e.code === '23505') throw erro('Já existe um caixa aberto.', 409);
         throw e;
       }
       const [[cx]] = await c.query('SELECT * FROM caixa WHERE id_caixa = ?', [r.insertId]);
@@ -1822,14 +1821,13 @@ class Database {
     if (to) { where.push('data_movimentacao <= ?'); params.push(`${to} 23:59:59`); }
     if (cat) params.push(cat);
     // Entradas e saídas somadas pelo MySQL numa única passada e ligadas ao produto por LEFT JOIN.
-    // IGNORE INDEX: esse índice não cobre a consulta; com ele o MySQL faz uma busca por linha (medido 2x mais lento).
     const [prods] = await pool.query(
       `SELECT p.*, c.nome_categoria, COALESCE(m.entradas, 0) AS entradas, COALESCE(m.saidas, 0) AS saidas
        FROM produto p JOIN categoria c ON c.id_categoria = p.id_categoria
        LEFT JOIN (
-         SELECT id_produto, SUM(IF(tipo_movimentacao = 'Entrada', quantidade, 0)) AS entradas,
-                SUM(IF(tipo_movimentacao = 'Saída', quantidade, 0)) AS saidas
-         FROM movimentacao_estoque IGNORE INDEX (idx_mov_produto_data) ${where.length ? `WHERE ${where.join(' AND ')}` : ''} GROUP BY id_produto
+         SELECT id_produto, SUM(CASE WHEN tipo_movimentacao = 'Entrada' THEN quantidade ELSE 0 END) AS entradas,
+                SUM(CASE WHEN tipo_movimentacao = 'Saída' THEN quantidade ELSE 0 END) AS saidas
+         FROM movimentacao_estoque ${where.length ? `WHERE ${where.join(' AND ')}` : ''} GROUP BY id_produto
        ) m ON m.id_produto = p.id_produto
        WHERE p.status = 'Ativo'${cat ? ' AND p.id_categoria = ?' : ''} ORDER BY p.id_produto`, params);
     const linhas = prods.map(p => ({
@@ -1967,8 +1965,8 @@ class Database {
       await c.query(
         `INSERT INTO ficha_tecnica (id_produto, rendimento, nome_rendimento, validade_dias, observacao, atualizada_em, id_usuario)
          VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE rendimento = VALUES(rendimento), nome_rendimento = VALUES(nome_rendimento), validade_dias = VALUES(validade_dias),
-           observacao = VALUES(observacao), atualizada_em = VALUES(atualizada_em), id_usuario = VALUES(id_usuario)`,
+         ON CONFLICT (id_produto) DO UPDATE SET rendimento = EXCLUDED.rendimento, nome_rendimento = EXCLUDED.nome_rendimento, validade_dias = EXCLUDED.validade_dias,
+           observacao = EXCLUDED.observacao, atualizada_em = EXCLUDED.atualizada_em, id_usuario = EXCLUDED.id_usuario`,
         [prod.id_produto, rendimento, nomeRend, validadeDias, obs, dataHora(), ator ? ator.id_usuario : null]);
       const [[f]] = await c.query('SELECT id_ficha FROM ficha_tecnica WHERE id_produto = ?', [prod.id_produto]);
       await c.query('DELETE FROM item_ficha_tecnica WHERE id_ficha = ?', [f.id_ficha]);

@@ -243,8 +243,7 @@ test('Cenário 4 / RF 12-14: relatórios com filtros e exportação PDF e XLSX',
 
 test('Persistência no MySQL e logs (RNF 06)', async () => {
   // Uma conexão nova (fora do pool do sistema) enxerga as mesmas vendas gravadas pela API.
-  const mysql = require('mysql2/promise');
-  const conn = await mysql.createConnection({ host: process.env.DB_HOST || 'localhost', port: Number(process.env.DB_PORT) || 3306, user: process.env.DB_USER || 'root', password: process.env.DB_PASSWORD || '', database: process.env.DB_NAME });
+  const conn = await require('../database/conexao').criarConexao();
   const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM venda');
   await conn.end();
   assert.equal(n, (await db.getVendas({})).length);
@@ -384,11 +383,11 @@ test('v2: painel com vendas dos últimos 7 dias e relatório de vendas consisten
 
 test('v2: esquema otimizado (índices e código da requisição pelo índice)', async () => {
   await db.verificarEsquema();
-  const idx = (await db.query("SELECT DISTINCT index_name AS n FROM information_schema.statistics WHERE table_schema = DATABASE()")).map(r => r.n);
+  const idx = (await db.query("SELECT indexname AS n FROM pg_indexes WHERE schemaname = current_schema()")).map(r => r.n);
   for (const n of ['idx_venda_status_data', 'idx_mov_origem_data', 'idx_mov_tipo_data', 'idx_produto_validade', 'idx_requisicao_situacao', 'idx_requisicao_numero', 'idx_sessao_expira', 'idx_token_reset_expira']) {
     assert.ok(idx.includes(n), `índice ${n} ausente`);
   }
-  const [[mx]] = await db.pool.query('SELECT MAX(CAST(SUBSTRING(codigo_pedido, 5) AS UNSIGNED)) AS n FROM requisicao');
+  const [[mx]] = await db.pool.query('SELECT MAX(CAST(SUBSTRING(codigo_pedido FROM 5) AS INTEGER)) AS n FROM requisicao');
   const a = await admin();
   const r = await a.post('/api/requisitions', { fornecedor: (await a.get('/api/suppliers')).suppliers[0], produto_nome: 'Item de teste v2', quantidade_pedida: 2 });
   assert.equal(r.status, 201, r.error);
